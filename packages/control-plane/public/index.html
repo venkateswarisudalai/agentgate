@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>agentgate</title>
+    <style>
+      :root {
+        --bg: #0b0d10;
+        --panel: #14171c;
+        --panel-2: #1b1f26;
+        --border: #262b33;
+        --text: #e6e9ee;
+        --muted: #8b94a3;
+        --accent: #7cf3a0;
+        --danger: #ff6b6b;
+        --warn: #ffd166;
+        --link: #74a8ff;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+      header { padding: 14px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }
+      header h1 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: 0.2px; }
+      header .tag { color: var(--muted); font-size: 12px; }
+      header .live { margin-left: auto; font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+      .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+      .dot.on { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+      main { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px; max-width: 1400px; margin: 0 auto; }
+      section { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; min-height: 60vh; }
+      section h2 { margin: 0; padding: 12px 16px; font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; border-bottom: 1px solid var(--border); }
+      .list { padding: 8px; display: flex; flex-direction: column; gap: 8px; max-height: 75vh; overflow: auto; }
+      .empty { color: var(--muted); padding: 24px; text-align: center; font-style: italic; }
+      .card { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 12px; }
+      .card .row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+      .card .agent { color: var(--link); font-weight: 600; }
+      .card .action { color: var(--warn); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+      .card .ts { color: var(--muted); font-size: 12px; margin-left: auto; }
+      .card .reason { margin: 8px 0; color: var(--text); }
+      .card pre.meta { background: #0e1116; border: 1px solid var(--border); border-radius: 4px; padding: 8px; margin: 8px 0 0; font-size: 12px; color: var(--muted); white-space: pre-wrap; word-break: break-word; }
+      .card .impact { margin: 10px 0 8px; padding: 10px 12px; background: rgba(255,209,102,0.08); border-left: 3px solid var(--warn); border-radius: 4px; }
+      .card .impact-headline { font-weight: 600; color: var(--text); margin-bottom: 6px; }
+      .card .impact ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+      .card .impact li { margin-bottom: 2px; }
+      .card .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+      .chip { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; background: var(--panel); border: 1px solid var(--border); color: var(--muted); }
+      .chip.sev-high { background: rgba(255,107,107,0.15); color: var(--danger); border-color: rgba(255,107,107,0.4); }
+      .chip.sev-medium { background: rgba(255,209,102,0.15); color: var(--warn); border-color: rgba(255,209,102,0.4); }
+      .chip.sev-low { background: rgba(124,243,160,0.15); color: var(--accent); border-color: rgba(124,243,160,0.4); }
+      .chip.rec-no { background: rgba(255,107,107,0.1); color: var(--danger); border-color: rgba(255,107,107,0.3); }
+      .chip.rec-partial { background: rgba(255,209,102,0.1); color: var(--warn); border-color: rgba(255,209,102,0.3); }
+      .chip.rec-yes { background: rgba(124,243,160,0.1); color: var(--accent); border-color: rgba(124,243,160,0.3); }
+      .card pre.cmd { background: #0e1116; border: 1px solid var(--border); border-radius: 4px; padding: 8px; margin: 8px 0 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--text); white-space: pre-wrap; word-break: break-word; }
+      .card details { margin-top: 8px; }
+      .card details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+      .card .actions { display: flex; gap: 8px; margin-top: 12px; }
+      .btn { padding: 6px 12px; border-radius: 4px; border: 1px solid var(--border); cursor: pointer; font: inherit; background: transparent; color: var(--text); }
+      .btn.approve { background: var(--accent); color: #06210d; border-color: var(--accent); font-weight: 600; }
+      .btn.deny { background: var(--danger); color: #2a0606; border-color: var(--danger); font-weight: 600; }
+      .badge { display: inline-block; padding: 1px 6px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+      .badge.approved { background: rgba(124,243,160,0.15); color: var(--accent); }
+      .badge.denied { background: rgba(255,107,107,0.15); color: var(--danger); }
+      .badge.pending { background: rgba(255,209,102,0.15); color: var(--warn); }
+      .audit { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+      .audit .row-line { display: grid; grid-template-columns: 150px 130px 100px 1fr; gap: 8px; padding: 6px 12px; border-bottom: 1px dashed var(--border); }
+      .audit .row-line:last-child { border-bottom: 0; }
+      .audit .ev-created { color: var(--link); }
+      .audit .ev-approved { color: var(--accent); }
+      .audit .ev-denied { color: var(--danger); }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>agentgate</h1>
+      <span class="tag">production safety for AI agents</span>
+      <span class="live"><span class="dot" id="dot"></span><span id="livetext">connecting…</span></span>
+    </header>
+    <main>
+      <section>
+        <h2>Pending approvals</h2>
+        <div class="list" id="pending"></div>
+      </section>
+      <section>
+        <h2>Audit log</h2>
+        <div class="audit" id="audit"></div>
+      </section>
+    </main>
+    <script>
+      const API = "";
+
+      async function getJSON(p) {
+        const r = await fetch(API + p);
+        if (!r.ok) throw new Error(p + " " + r.status);
+        return r.json();
+      }
+      async function postJSON(p, body) {
+        const r = await fetch(API + p, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!r.ok) throw new Error(p + " " + r.status);
+        return r.json();
+      }
+
+      function fmtTs(ts) {
+        if (!ts) return "";
+        const d = new Date(ts.endsWith("Z") ? ts : ts + "Z");
+        return d.toLocaleTimeString([], { hour12: false });
+      }
+
+      function badge(status) {
+        return `<span class="badge ${status}">${status}</span>`;
+      }
+
+      function render(card) {
+        const md = card.metadata || {};
+        const impact = md.impact || null;
+        const chips = [];
+        if (md.severity) chips.push(`<span class="chip sev-${md.severity}">${escapeHtml(md.severity)}</span>`);
+        if (md.category) chips.push(`<span class="chip">${escapeHtml(md.category)}</span>`);
+        if (md.ruleId) chips.push(`<span class="chip">${escapeHtml(md.ruleId)}</span>`);
+        if (impact?.recoverable) chips.push(`<span class="chip rec-${impact.recoverable}">recoverable: ${escapeHtml(impact.recoverable)}</span>`);
+
+        const impactBlock = impact ? `
+          <div class="impact">
+            <div class="impact-headline">${escapeHtml(impact.headline || card.reason || "")}</div>
+            ${(impact.consequences || []).length ? `<ul>${impact.consequences.map((c) => `<li>${escapeHtml(c)}</li>`).join("")}</ul>` : ""}
+          </div>` : `<div class="reason">${escapeHtml(card.reason)}</div>`;
+
+        const cmd = md.toolInput?.command || md.toolInput?.file_path || md.action || "";
+        const cmdBlock = cmd ? `<pre class="cmd">${escapeHtml(cmd)}</pre>` : "";
+
+        const targets = impact?.targets && Object.keys(impact.targets).length
+          ? `<details><summary>parsed targets</summary><pre class="meta">${escapeHtml(JSON.stringify(impact.targets, null, 2))}</pre></details>` : "";
+
+        const fullMeta = `<details><summary>full metadata</summary><pre class="meta">${escapeHtml(JSON.stringify(md, null, 2))}</pre></details>`;
+
+        return `
+          <div class="card" data-id="${card.id}">
+            <div class="row">
+              <span class="agent">${escapeHtml(card.agent)}</span>
+              <span>wants to</span>
+              <span class="action">${escapeHtml(card.action)}</span>
+              <span class="ts">${fmtTs(card.createdAt)}</span>
+            </div>
+            <div class="chips">${chips.join("")}</div>
+            ${impactBlock}
+            ${cmdBlock}
+            ${targets}
+            ${fullMeta}
+            <div class="actions">
+              <button class="btn approve" data-act="approve">Approve</button>
+              <button class="btn deny" data-act="deny">Deny</button>
+            </div>
+          </div>`;
+      }
+
+      function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, (c) => ({
+          "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+        })[c]);
+      }
+
+      async function refreshPending() {
+        const rows = await getJSON("/v1/approvals?status=pending&limit=50");
+        const el = document.getElementById("pending");
+        if (!rows.length) { el.innerHTML = '<div class="empty">No pending approvals. Agents are behaving.</div>'; return; }
+        el.innerHTML = rows.map(render).join("");
+      }
+
+      async function refreshAudit() {
+        const rows = await getJSON("/v1/audit");
+        const el = document.getElementById("audit");
+        if (!rows.length) { el.innerHTML = '<div class="empty">No events yet.</div>'; return; }
+        el.innerHTML = rows.map((r) => {
+          const cls = r.event === "approval.created" ? "ev-created" :
+                      r.event === "approval.approved" ? "ev-approved" :
+                      r.event === "approval.denied" ? "ev-denied" : "";
+          return `<div class="row-line">
+            <span>${fmtTs(r.createdAt)}</span>
+            <span class="${cls}">${escapeHtml(r.event)}</span>
+            <span>${escapeHtml(r.actor || "")}</span>
+            <span title="${escapeHtml(r.approvalId)}">${escapeHtml(r.approvalId.slice(0, 8))}</span>
+          </div>`;
+        }).join("");
+      }
+
+      document.addEventListener("click", async (e) => {
+        const btn = e.target.closest(".btn");
+        if (!btn) return;
+        const card = btn.closest(".card");
+        if (!card) return;
+        const id = card.dataset.id;
+        const approved = btn.dataset.act === "approve";
+        btn.disabled = true;
+        try {
+          await postJSON(`/v1/approvals/${id}/decide`, {
+            approved,
+            decidedBy: "dashboard-user",
+          });
+        } catch (err) {
+          alert("Failed: " + err.message);
+          btn.disabled = false;
+        }
+      });
+
+      function connectSSE() {
+        const es = new EventSource("/v1/events");
+        const dot = document.getElementById("dot");
+        const txt = document.getElementById("livetext");
+        es.onopen = () => { dot.classList.add("on"); txt.textContent = "live"; };
+        es.onerror = () => { dot.classList.remove("on"); txt.textContent = "reconnecting…"; };
+        es.onmessage = () => { refreshPending(); refreshAudit(); };
+      }
+
+      refreshPending();
+      refreshAudit();
+      connectSSE();
+    </script>
+  </body>
+</html>

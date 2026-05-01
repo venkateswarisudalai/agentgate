@@ -1,0 +1,21 @@
+{
+  "name": "agentgate",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Production safety for AI agents",
+  "workspaces": [
+    "packages/*",
+    "examples/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "start": "npm run start --workspace=@agentgate/control-plane",
+    "example": "npm run start --workspace=@agentgate/example-dangerous-agent"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

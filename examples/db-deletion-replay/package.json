@@ -1,0 +1,17 @@
+{
+  "name": "@agentgate/example-db-deletion-replay",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Replay of the 'AI agent deletes prod DB in 9 seconds' incident, gated through agentgate",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "tsc -p tsconfig.json && node dist/index.js"
+  },
+  "dependencies": {
+    "@agentgate/sdk": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0"
+  }
+}

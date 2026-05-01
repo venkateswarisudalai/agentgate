@@ -1,0 +1,19 @@
+{
+  "name": "@agentgate/mcp-gate",
+  "version": "0.0.1",
+  "description": "MCP-server gate — wraps any MCP server and routes tool calls through agentgate",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "agentgate-mcp-gate": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@agentgate/sdk": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0"
+  }
+}

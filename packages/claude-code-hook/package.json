@@ -1,0 +1,19 @@
+{
+  "name": "@agentgate/claude-code-hook",
+  "version": "0.0.1",
+  "description": "Claude Code PreToolUse hook that gates dangerous tool calls through agentgate",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "agentgate-claude-code-hook": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@agentgate/sdk": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0"
+  }
+}

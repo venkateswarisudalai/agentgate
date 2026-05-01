@@ -1,0 +1,60 @@
+{
+  "_comment_1": "DevOps Agent on agentgate — template for ~/.claude/settings.json or .claude/settings.json",
+  "_comment_2": "After install.sh, replace AGENTGATE_HOME with the absolute path to the agentgate repo on this machine.",
+  "_comment_3": "After loading, restart Claude Code. New sessions will use this configuration.",
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node AGENTGATE_HOME/packages/claude-code-hook/dist/index.js"
+          }
+        ]
+      }
+    ]
+  },
+
+  "mcpServers": {
+    "filesystem-via-agentgate": {
+      "command": "node",
+      "args": [
+        "AGENTGATE_HOME/packages/mcp-gate/dist/index.js",
+        "--agent", "filesystem-mcp",
+        "--",
+        "npx", "-y", "@modelcontextprotocol/server-filesystem", "AGENTGATE_USER_HOME"
+      ]
+    },
+
+    "_comment_servers": "Uncomment and configure any of the below as you adopt them. Each one wraps a real MCP server through agentgate's mcp-gate so destructive tool calls are intercepted and require approval.",
+
+    "_postgres-via-agentgate": {
+      "command": "node",
+      "args": [
+        "AGENTGATE_HOME/packages/mcp-gate/dist/index.js",
+        "--agent", "postgres-mcp",
+        "--",
+        "npx", "-y", "@modelcontextprotocol/server-postgres", "postgres://USER:PASS@HOST/DB"
+      ]
+    },
+
+    "_github-via-agentgate": {
+      "command": "node",
+      "args": [
+        "AGENTGATE_HOME/packages/mcp-gate/dist/index.js",
+        "--agent", "github-mcp",
+        "--",
+        "npx", "-y", "@modelcontextprotocol/server-github"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_set_in_your_shell_profile"
+      }
+    }
+  },
+
+  "_load_system_prompt_from": "AGENTGATE_HOME/examples/devops-agent/system-prompt.md",
+  "_load_runbooks_from": "AGENTGATE_HOME/examples/devops-agent/runbooks/",
+  "_note": "Claude Code does not yet have a stable settings key for default system prompts. Until then, paste the contents of system-prompt.md as the first message of new sessions, or symlink runbooks/ into your project root so Claude Code picks it up as project context."
+}

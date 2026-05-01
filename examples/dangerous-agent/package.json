@@ -1,0 +1,17 @@
+{
+  "name": "@agentgate/example-dangerous-agent",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Demo: an agent that almost drops a prod table",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "tsc -p tsconfig.json && node dist/index.js"
+  },
+  "dependencies": {
+    "@agentgate/sdk": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0"
+  }
+}

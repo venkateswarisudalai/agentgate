@@ -1,0 +1,16 @@
+{
+  "name": "@agentgate/cli",
+  "version": "0.0.1",
+  "description": "Terminal CLI for agentgate — watch and approve agent actions from the terminal",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "agentgate": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0"
+  }
+}

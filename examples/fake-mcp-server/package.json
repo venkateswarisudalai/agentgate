@@ -1,0 +1,14 @@
+{
+  "name": "@agentgate/example-fake-mcp-server",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Tiny stdio MCP server with safe + dangerous tools, for demoing mcp-gate",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0"
+  }
+}

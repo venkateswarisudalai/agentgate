@@ -1,0 +1,83 @@
+{
+  "_comment": "Opinionated rule overrides for DevOps work. NOT YET LOADED — claude-code-hook reads its rules from src/rules.ts in v0. Once v0.2 lands rule-file loading (~/.agentgate/rules.json or AGENTGATE_RULES_FILE), this file will plug in.",
+  "_planned_for": "v0.2",
+
+  "name": "devops-agent-default",
+  "version": "0.0.1",
+  "description": "Opinionated overrides for safe DevOps/MLOps work on top of the built-in rule set.",
+
+  "tier_overrides": {
+    "_comment": "Disable noisy categories by default; re-enable per-team",
+    "low": "off",
+    "medium": "ask",
+    "high": "ask"
+  },
+
+  "category_policy": {
+    "filesystem": "ask",
+    "git": "ask",
+    "infra": "ask",
+    "cloud": "ask",
+    "db": "ask",
+    "ml": "ask",
+    "data": "ask",
+    "secrets": "ask",
+    "iam": "ask",
+    "ci-cd": "ask",
+    "gitops": "ask",
+    "system": "ask",
+    "supply-chain": "ask",
+    "network": "ask",
+    "container": "ask",
+    "mcp": "ask"
+  },
+
+  "always_allow": [
+    "_comment: tool-call patterns that are explicitly safe in this agent's context",
+    "kubectl get *",
+    "kubectl describe *",
+    "kubectl logs *",
+    "kubectl top *",
+    "git log *",
+    "git diff *",
+    "git status",
+    "terraform plan",
+    "terraform fmt *",
+    "helm list *",
+    "argocd app list",
+    "argocd app get *"
+  ],
+
+  "always_ask": [
+    "_comment: things that even auto-policy should never auto-approve",
+    "kubectl delete *",
+    "terraform apply *",
+    "terraform destroy *",
+    "helm uninstall *",
+    "DROP TABLE *",
+    "DROP DATABASE *",
+    "git push --force *",
+    "aws iam delete-* *",
+    "vault delete *",
+    "vault kv destroy *",
+    "crontab -r"
+  ],
+
+  "always_deny": [
+    "_comment: never allow these even with approval (use deny if a 'no' policy decision is correct)",
+    "rm -rf /",
+    "rm -rf ~",
+    "rm -rf $HOME",
+    "kill -9 1",
+    "shutdown -h now",
+    "mkfs.* /dev/sda*",
+    "dd if=* of=/dev/sda*"
+  ],
+
+  "approver_constraints": {
+    "_comment": "Constraints on who can approve what (planned for v0.2 with multi-tenant)",
+    "production_changes_require_role": "sre-oncall",
+    "model_promotion_requires_role": "ml-platform",
+    "iam_changes_require_role": "security-admin"
+  }
+}
