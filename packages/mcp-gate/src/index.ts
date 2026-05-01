@@ -9,7 +9,9 @@
  * which it intercepts: classify risk → request approval from agentgate
  * control plane → forward (or return error) accordingly.
  */
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcessByStdio } from "node:child_process";
+import type { Readable, Writable } from "node:stream";
+type WrappedProc = ChildProcessByStdio<Writable, Readable, null>;
 import * as readline from "node:readline";
 import { AgentGate, ApprovalTimeoutError } from "@agentgate/sdk";
 import { classify } from "./heuristics.js";
@@ -100,7 +102,7 @@ async function main() {
     defaultTimeoutMs: cfg.timeoutMs,
   });
 
-  const child: ChildProcessWithoutNullStreams = spawn(cfg.cmd, cfg.args, {
+  const child = spawn(cfg.cmd, cfg.args, {
     stdio: ["pipe", "pipe", "inherit"],
   });
   child.on("exit", (code, signal) => {
@@ -148,7 +150,7 @@ async function main() {
 
 async function handleToolsCall(
   msg: JsonRpc,
-  child: ChildProcessWithoutNullStreams,
+  child: WrappedProc,
   gate: AgentGate,
   cfg: Cfg,
 ): Promise<void> {
