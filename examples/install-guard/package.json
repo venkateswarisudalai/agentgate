@@ -1,0 +1,18 @@
+{
+  "name": "@agentgate/example-install-guard",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Demo: scan packages before pip/npm install — auto-allow safe, deny critical, gate the rest",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "tsc -p tsconfig.json && node dist/index.js"
+  },
+  "dependencies": {
+    "@agentgate/sdk": "*",
+    "@agentgate/pkg-scan": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0"
+  }
+}
