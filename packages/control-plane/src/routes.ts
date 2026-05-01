@@ -1,8 +1,14 @@
 import type { FastifyInstance } from "fastify";
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
-import type { ApprovalRow, AuditRow } from "./db.js";
+import type { ApprovalRow, AuditRow, PolicyEffect, PolicyRow } from "./db.js";
 import { bus } from "./events.js";
+import {
+  evaluatePolicies,
+  evalCondition,
+  parseCondition,
+  PolicyConditionError,
+} from "./policy.js";
 
 type CreateBody = {
   agent: string;
@@ -16,6 +22,60 @@ type DecideBody = {
   decidedBy?: string;
   reason?: string;
 };
+
+type PolicyBody = {
+  name: string;
+  description?: string;
+  agentPattern?: string;
+  actionPattern?: string;
+  condition?: unknown;
+  effect: PolicyEffect;
+  priority?: number;
+  enabled?: boolean;
+};
+
+type PolicyTestBody = {
+  agent: string;
+  action: string;
+  metadata?: Record<string, unknown>;
+};
+
+const VALID_EFFECTS: readonly PolicyEffect[] = ["allow", "deny", "require_approval"];
+
+function rowToPolicy(row: PolicyRow) {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    agentPattern: row.agent_pattern,
+    actionPattern: row.action_pattern,
+    condition: parseCondition(row.condition),
+    effect: row.effect,
+    priority: row.priority,
+    enabled: row.enabled === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function normalizeCondition(condition: unknown): string {
+  if (condition === undefined || condition === null) return "true";
+  if (typeof condition === "string") {
+    const parsed = parseCondition(condition);
+    return JSON.stringify(parsed);
+  }
+  return JSON.stringify(condition);
+}
+
+function validateConditionShape(condition: unknown): string | null {
+  try {
+    evalCondition(condition, { agent: "_probe", action: "_probe", metadata: {} });
+    return null;
+  } catch (err) {
+    if (err instanceof PolicyConditionError) return err.message;
+    return "invalid condition";
+  }
+}
 
 function rowToDecision(row: ApprovalRow) {
   return {
@@ -40,7 +100,50 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
       return reply.code(400).send({ error: "agent, action, and reason are required" });
     }
     const id = randomUUID();
-    const metaJson = JSON.stringify(metadata ?? {});
+    const meta = metadata ?? {};
+    const metaJson = JSON.stringify(meta);
+
+    const match = evaluatePolicies(db, { agent, action, metadata: meta });
+    const autoDecide =
+      match && (match.effect === "allow" || match.effect === "deny") ? match : null;
+
+    if (autoDecide) {
+      const status = autoDecide.effect === "allow" ? "approved" : "denied";
+      const actor = `policy:${autoDecide.policyName}`;
+      db.prepare(
+        `INSERT INTO approvals
+           (id, agent, action, reason, metadata, status, decided_by, decided_at, decision_reason)
+         VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)`,
+      ).run(
+        id,
+        agent,
+        action,
+        reason,
+        metaJson,
+        status,
+        actor,
+        `auto-${status} by policy ${autoDecide.policyName}`,
+      );
+      db.prepare(
+        `INSERT INTO audit_log (approval_id, event, actor, payload)
+         VALUES (?, 'approval.created', ?, ?)`,
+      ).run(id, agent, metaJson);
+      db.prepare(
+        `INSERT INTO audit_log (approval_id, event, actor, payload)
+         VALUES (?, ?, ?, ?)`,
+      ).run(
+        id,
+        `approval.auto_${status}`,
+        actor,
+        JSON.stringify({ policyId: autoDecide.policyId, policyName: autoDecide.policyName }),
+      );
+      bus.emitEvent({ type: "approval.created", approvalId: id });
+      bus.emitEvent({ type: "approval.decided", approvalId: id, status });
+      return reply
+        .code(201)
+        .send({ id, status, decidedBy: actor, policy: autoDecide.policyName });
+    }
+
     db.prepare(
       `INSERT INTO approvals (id, agent, action, reason, metadata, status)
        VALUES (?, ?, ?, ?, ?, 'pending')`,
@@ -49,8 +152,18 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
       `INSERT INTO audit_log (approval_id, event, actor, payload)
        VALUES (?, 'approval.created', ?, ?)`,
     ).run(id, agent, metaJson);
+    if (match && match.effect === "require_approval") {
+      db.prepare(
+        `INSERT INTO audit_log (approval_id, event, actor, payload)
+         VALUES (?, 'approval.policy_matched', ?, ?)`,
+      ).run(
+        id,
+        `policy:${match.policyName}`,
+        JSON.stringify({ policyId: match.policyId, policyName: match.policyName }),
+      );
+    }
     bus.emitEvent({ type: "approval.created", approvalId: id });
-    return reply.code(201).send({ id });
+    return reply.code(201).send({ id, status: "pending" });
   });
 
   app.get<{ Params: { id: string } }>("/v1/approvals/:id", async (req, reply) => {
@@ -141,6 +254,139 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
       payload: JSON.parse(r.payload),
       createdAt: r.created_at,
     }));
+  });
+
+  app.get("/v1/policies", async () => {
+    const rows = db
+      .prepare(`SELECT * FROM policies ORDER BY priority ASC, created_at ASC`)
+      .all() as PolicyRow[];
+    return rows.map(rowToPolicy);
+  });
+
+  app.get<{ Params: { id: string } }>("/v1/policies/:id", async (req, reply) => {
+    const row = db
+      .prepare(`SELECT * FROM policies WHERE id = ?`)
+      .get(req.params.id) as PolicyRow | undefined;
+    if (!row) return reply.code(404).send({ error: "not found" });
+    return rowToPolicy(row);
+  });
+
+  app.post<{ Body: PolicyBody }>("/v1/policies", async (req, reply) => {
+    const body = req.body ?? ({} as PolicyBody);
+    if (!body.name || !body.effect) {
+      return reply.code(400).send({ error: "name and effect are required" });
+    }
+    if (!VALID_EFFECTS.includes(body.effect)) {
+      return reply.code(400).send({ error: `effect must be one of ${VALID_EFFECTS.join(",")}` });
+    }
+    let conditionJson: string;
+    try {
+      conditionJson = normalizeCondition(body.condition);
+    } catch {
+      return reply.code(400).send({ error: "condition must be valid JSON" });
+    }
+    const condErr = validateConditionShape(JSON.parse(conditionJson));
+    if (condErr) return reply.code(400).send({ error: condErr });
+
+    const id = randomUUID();
+    try {
+      db.prepare(
+        `INSERT INTO policies
+           (id, name, description, agent_pattern, action_pattern, condition, effect, priority, enabled)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        id,
+        body.name,
+        body.description ?? null,
+        body.agentPattern ?? "*",
+        body.actionPattern ?? "*",
+        conditionJson,
+        body.effect,
+        body.priority ?? 100,
+        body.enabled === false ? 0 : 1,
+      );
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (msg.includes("UNIQUE")) return reply.code(409).send({ error: "name already exists" });
+      throw err;
+    }
+    const row = db.prepare(`SELECT * FROM policies WHERE id = ?`).get(id) as PolicyRow;
+    return reply.code(201).send(rowToPolicy(row));
+  });
+
+  app.put<{ Params: { id: string }; Body: Partial<PolicyBody> }>(
+    "/v1/policies/:id",
+    async (req, reply) => {
+      const row = db
+        .prepare(`SELECT * FROM policies WHERE id = ?`)
+        .get(req.params.id) as PolicyRow | undefined;
+      if (!row) return reply.code(404).send({ error: "not found" });
+
+      const body = req.body ?? {};
+      if (body.effect && !VALID_EFFECTS.includes(body.effect)) {
+        return reply.code(400).send({ error: `effect must be one of ${VALID_EFFECTS.join(",")}` });
+      }
+      let conditionJson = row.condition;
+      if (body.condition !== undefined) {
+        try {
+          conditionJson = normalizeCondition(body.condition);
+        } catch {
+          return reply.code(400).send({ error: "condition must be valid JSON" });
+        }
+        const condErr = validateConditionShape(JSON.parse(conditionJson));
+        if (condErr) return reply.code(400).send({ error: condErr });
+      }
+
+      db.prepare(
+        `UPDATE policies SET
+           name = COALESCE(?, name),
+           description = COALESCE(?, description),
+           agent_pattern = COALESCE(?, agent_pattern),
+           action_pattern = COALESCE(?, action_pattern),
+           condition = ?,
+           effect = COALESCE(?, effect),
+           priority = COALESCE(?, priority),
+           enabled = COALESCE(?, enabled),
+           updated_at = datetime('now')
+         WHERE id = ?`,
+      ).run(
+        body.name ?? null,
+        body.description ?? null,
+        body.agentPattern ?? null,
+        body.actionPattern ?? null,
+        conditionJson,
+        body.effect ?? null,
+        body.priority ?? null,
+        body.enabled === undefined ? null : body.enabled ? 1 : 0,
+        req.params.id,
+      );
+      const updated = db
+        .prepare(`SELECT * FROM policies WHERE id = ?`)
+        .get(req.params.id) as PolicyRow;
+      return rowToPolicy(updated);
+    },
+  );
+
+  app.delete<{ Params: { id: string } }>("/v1/policies/:id", async (req, reply) => {
+    const result = db.prepare(`DELETE FROM policies WHERE id = ?`).run(req.params.id);
+    if (result.changes === 0) return reply.code(404).send({ error: "not found" });
+    return reply.code(204).send();
+  });
+
+  app.post<{ Body: PolicyTestBody }>("/v1/policies/test", async (req, reply) => {
+    const { agent, action, metadata } = req.body ?? ({} as PolicyTestBody);
+    if (!agent || !action) {
+      return reply.code(400).send({ error: "agent and action are required" });
+    }
+    const match = evaluatePolicies(db, { agent, action, metadata: metadata ?? {} });
+    if (!match) return { match: null, decision: "pending" };
+    return {
+      match: { policyId: match.policyId, policyName: match.policyName, effect: match.effect },
+      decision:
+        match.effect === "allow" ? "approved"
+        : match.effect === "deny" ? "denied"
+        : "pending",
+    };
   });
 
   app.get("/v1/events", async (req, reply) => {

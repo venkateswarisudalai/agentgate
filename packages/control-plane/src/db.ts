@@ -26,6 +26,22 @@ export type AuditRow = {
   created_at: string;
 };
 
+export type PolicyEffect = "allow" | "deny" | "require_approval";
+
+export type PolicyRow = {
+  id: string;
+  name: string;
+  description: string | null;
+  agent_pattern: string;
+  action_pattern: string;
+  condition: string;
+  effect: PolicyEffect;
+  priority: number;
+  enabled: number;
+  created_at: string;
+  updated_at: string;
+};
+
 export function openDb(path: string): Database.Database {
   mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path);
@@ -57,6 +73,23 @@ export function openDb(path: string): Database.Database {
     );
 
     CREATE INDEX IF NOT EXISTS idx_audit_approval ON audit_log(approval_id, id);
+
+    CREATE TABLE IF NOT EXISTS policies (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      description TEXT,
+      agent_pattern TEXT NOT NULL DEFAULT '*',
+      action_pattern TEXT NOT NULL DEFAULT '*',
+      condition TEXT NOT NULL DEFAULT 'true',
+      effect TEXT NOT NULL CHECK (effect IN ('allow','deny','require_approval')),
+      priority INTEGER NOT NULL DEFAULT 100,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_policies_eval
+      ON policies(enabled, priority ASC, created_at ASC);
   `);
   return db;
 }
