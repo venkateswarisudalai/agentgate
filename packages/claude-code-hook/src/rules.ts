@@ -934,6 +934,107 @@ const BASH_RULES: BashRule[] = [
       ],
       "yes",
     ) },
+  // ----- HTTP / network write surface (the curl + bearer + mutation family) -----
+  { id: "http-destructive-payload", category: "network", severity: "high",
+    description: "HTTP call carrying a destructive payload (GraphQL/REST)",
+    // catches calls whose payload includes mutating verbs against any HTTP client
+    pattern:
+      /\b(curl|wget|http|https|httpie|xh|Invoke-WebRequest|Invoke-RestMethod)\b[\s\S]*?\b(mutation\s*\{[\s\S]*?(delete|destroy|drop|terminate|shutdown|cancel|remove|destroy|revoke)|"(action|op|operation)"\s*:\s*"(delete|destroy|drop|terminate|shutdown|cancel|remove|revoke)")/i,
+    describe: (cmd) => {
+      const url = (cmd.match(/https?:\/\/[^\s'"]+/i) ?? [""])[0];
+      const verb = (cmd.match(/\b(delete|destroy|drop|terminate|shutdown|cancel|remove|revoke)\w*/i) ?? [""])[0];
+      return {
+        headline: `HTTP call with destructive payload (${verb || "mutation"}) to ${url || "external service"}`,
+        consequences: [
+          "Body contains a mutation/REST verb that destroys or revokes external state",
+          "These are typically irreversible on the receiving service",
+          "Examples: GraphQL `mutation { volumeDelete(...) }`, REST `{\"action\":\"terminate\"}`",
+        ],
+        recoverable: "no",
+        targets: { url, verb },
+      };
+    } },
+  { id: "http-bearer-auth", category: "network", severity: "high",
+    description: "HTTP call with Authorization: Bearer (credentialed)",
+    // any curl/wget/http/PowerShell HTTP carrying a Bearer token — likely
+    // using a credential against a remote API
+    pattern:
+      /\b(curl|wget|http|https|httpie|xh|Invoke-WebRequest|Invoke-RestMethod)\b[\s\S]*?(Authorization\s*:\s*Bearer\b|--oauth2-bearer\b|-H\s+["']?Authorization)/i,
+    describe: (cmd) => {
+      const url = (cmd.match(/https?:\/\/[^\s'"]+/i) ?? [""])[0];
+      return {
+        headline: `Authenticated HTTP call to ${url || "external service"}`,
+        consequences: [
+          "Carrying a Bearer token / API key to a remote service",
+          "If the token is leaked or scoped wrong, this can mutate external state under the agent's identity",
+          "Self-preserving / scope-drifting agents often surface here first",
+        ],
+        recoverable: "unknown",
+        targets: { url },
+      };
+    } },
+  { id: "http-write-method", category: "network", severity: "medium",
+    description: "HTTP call using a write method (POST/PUT/PATCH/DELETE)",
+    // generic: any explicit write-method HTTP from common CLIs
+    pattern:
+      /\b(?:(?:curl|xh|httpie)\b[\s\S]*?(?:-X\s*|--request\s+)?(POST|PUT|PATCH|DELETE)\b|wget\b[\s\S]*?(?:--method=(POST|PUT|PATCH|DELETE)|--post-(?:data|file)\b)|http(?:s)?\s+(POST|PUT|PATCH|DELETE)\b|Invoke-(?:WebRequest|RestMethod)\b[\s\S]*?-Method\s+(POST|PUT|PATCH|DELETE))/i,
+    describe: (cmd) => {
+      const method =
+        (cmd.match(/\b(POST|PUT|PATCH|DELETE)\b/i) ?? [""])[0].toUpperCase();
+      const url = (cmd.match(/https?:\/\/[^\s'"]+/i) ?? [""])[0];
+      return {
+        headline: `HTTP ${method || "write"} to ${url || "external service"}`,
+        consequences: [
+          "Mutates state on a remote service",
+          "Effects depend on the target — refunds, deletions, IAM changes, deploy triggers, etc.",
+          "Pair with Authorization headers? Treat as credentialed write.",
+        ],
+        recoverable: "unknown",
+        targets: { method, url },
+      };
+    } },
+  { id: "inline-script-http-write", category: "network", severity: "high",
+    description: "Inline interpreter (python/node/ruby/perl) issuing HTTP write",
+    // Catches `python -c`, `node -e`, `ruby -e`, `perl -e` whose body
+    // contains an HTTP-library reference AND a write verb. Two-step so
+    // libraries imported via require/import + chained .delete still match.
+    pattern:
+      /\b(python3?|node|deno|bun|ruby|perl)\b[\s\S]*?(?:-c|-e|--eval|--exec)\b[\s\S]*?(?:axios|got|httpx|aiohttp|requests|urllib|node-fetch|undici|http\.client|net::http|net\/http|lwp::useragent|http::tiny|fetch\(|XMLHttpRequest)[\s\S]{0,400}?(?:\.(post|put|patch|delete)\s*\(|method\s*:\s*["'](POST|PUT|PATCH|DELETE)|"(?:POST|PUT|PATCH|DELETE)"|\b(POST|PUT|PATCH|DELETE)\b)/i,
+    describe: (cmd) => {
+      const interp = (cmd.match(/\b(python3?|node|deno|bun|ruby|perl)\b/i) ?? [""])[0];
+      const verb =
+        (cmd.match(/\b(POST|PUT|PATCH|DELETE)\b/i)?.[0]?.toUpperCase()) ||
+        (cmd.match(/\.(post|put|patch|delete)\b/i)?.[1]?.toUpperCase()) ||
+        "write";
+      return {
+        headline: `inline ${interp} script issuing HTTP ${verb}`,
+        consequences: [
+          "Script-level HTTP bypasses curl/wget rules",
+          "Often used to dodge static command scanners",
+          "Same destructive potential as a direct curl",
+        ],
+        recoverable: "unknown",
+        targets: { interpreter: interp, verb },
+      };
+    } },
+  { id: "http-control-endpoint", category: "infra", severity: "high",
+    description: "HTTP call to a probable control-plane / admin endpoint",
+    // URLs whose path strongly suggests admin/control/IAM/billing surface
+    pattern:
+      /https?:\/\/[^\s'"]*\/(?:admin|control|cancel-shutdown|disable|shutdown|terminate|destroy|iam|tokens?|api-keys?|secrets?|billing|payouts?|policies|quarantine|graphql)(?:[\/?][^\s'"]*)?/i,
+    describe: (cmd) => {
+      const url = (cmd.match(/https?:\/\/[^\s'"]+/i) ?? [""])[0];
+      return {
+        headline: `HTTP call to control-plane-shaped URL: ${url}`,
+        consequences: [
+          "Path looks like an admin/control/IAM/billing surface",
+          "These endpoints generally make irreversible changes",
+          "Likely outside the scope of a routine task agent",
+        ],
+        recoverable: "no",
+        targets: { url },
+      };
+    } },
 ];
 
 // ---------- PATH RULES ----------
