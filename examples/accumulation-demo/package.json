@@ -1,0 +1,17 @@
+{
+  "name": "@agentgate/example-accumulation-demo",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Demo: sessions + windowed/accumulation policies + auto-quarantine",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "tsc -p tsconfig.json && node dist/index.js"
+  },
+  "dependencies": {
+    "@agentgate/sdk": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0"
+  }
+}

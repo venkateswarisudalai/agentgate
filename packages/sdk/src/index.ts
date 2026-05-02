@@ -3,6 +3,16 @@ export type ApprovalRequest = {
   reason: string;
   metadata?: Record<string, unknown>;
   timeoutMs?: number;
+  sessionId?: string;
+};
+
+export type Session = {
+  id: string;
+  agent: string;
+  status: "active" | "ended";
+  metadata: Record<string, unknown>;
+  startedAt: string;
+  endedAt: string | null;
 };
 
 export type Decision = {
@@ -55,6 +65,28 @@ export class AgentGate {
     return this.waitForDecision(created.id, timeoutMs);
   }
 
+  async beginSession(metadata?: Record<string, unknown>): Promise<Session> {
+    const res = await this.fetch("/v1/sessions", {
+      method: "POST",
+      body: JSON.stringify({ agent: this.agent, metadata: metadata ?? {} }),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to begin session: ${res.status} ${await res.text()}`);
+    }
+    return (await res.json()) as Session;
+  }
+
+  async endSession(sessionId: string): Promise<Session> {
+    const res = await this.fetch(`/v1/sessions/${sessionId}/end`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to end session: ${res.status} ${await res.text()}`);
+    }
+    return (await res.json()) as Session;
+  }
+
   private async createApproval(req: ApprovalRequest): Promise<{ id: string }> {
     const res = await this.fetch("/v1/approvals", {
       method: "POST",
@@ -63,6 +95,7 @@ export class AgentGate {
         action: req.action,
         reason: req.reason,
         metadata: req.metadata ?? {},
+        sessionId: req.sessionId,
       }),
     });
     if (!res.ok) {
