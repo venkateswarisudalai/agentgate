@@ -11,7 +11,8 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@agentgate/sdk": "*"
+    "@agentgate/sdk": "*",
+    "@agentgate/pkg-scan": "*"
   },
   "devDependencies": {
     "@types/node": "^22.9.0"
