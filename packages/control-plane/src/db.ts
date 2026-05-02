@@ -15,6 +15,7 @@ export type ApprovalRow = {
   decided_at: string | null;
   decision_reason: string | null;
   created_at: string;
+  session_id: string | null;
 };
 
 export type AuditRow = {
@@ -26,7 +27,7 @@ export type AuditRow = {
   created_at: string;
 };
 
-export type PolicyEffect = "allow" | "deny" | "require_approval";
+export type PolicyEffect = "allow" | "deny" | "require_approval" | "quarantine_agent";
 
 export type PolicyRow = {
   id: string;
@@ -38,9 +39,79 @@ export type PolicyRow = {
   effect: PolicyEffect;
   priority: number;
   enabled: number;
+  quarantine_minutes: number | null;
   created_at: string;
   updated_at: string;
 };
+
+export type SessionStatus = "active" | "ended";
+
+export type SessionRow = {
+  id: string;
+  agent: string;
+  status: SessionStatus;
+  metadata: string;
+  started_at: string;
+  ended_at: string | null;
+};
+
+export type AgentStateRow = {
+  agent: string;
+  quarantined_until: string | null;
+  quarantine_reason: string | null;
+  quarantined_at: string | null;
+  updated_at: string;
+};
+
+type ColumnInfo = { name: string };
+
+function hasColumn(db: Database.Database, table: string, column: string): boolean {
+  const rows = db.pragma(`table_info(${table})`) as ColumnInfo[];
+  return rows.some((r) => r.name === column);
+}
+
+function migrate(db: Database.Database): void {
+  if (!hasColumn(db, "approvals", "session_id")) {
+    db.exec(`ALTER TABLE approvals ADD COLUMN session_id TEXT`);
+  }
+  if (!hasColumn(db, "policies", "quarantine_minutes")) {
+    db.exec(`ALTER TABLE policies ADD COLUMN quarantine_minutes INTEGER DEFAULT 60`);
+  }
+  // Widen policies.effect CHECK constraint to include 'quarantine_agent'.
+  const tbl = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='policies'`)
+    .get() as { sql: string } | undefined;
+  if (tbl && !tbl.sql.includes("'quarantine_agent'")) {
+    db.exec(`
+      PRAGMA foreign_keys=off;
+      BEGIN TRANSACTION;
+      ALTER TABLE policies RENAME TO policies_old;
+      CREATE TABLE policies (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        description TEXT,
+        agent_pattern TEXT NOT NULL DEFAULT '*',
+        action_pattern TEXT NOT NULL DEFAULT '*',
+        condition TEXT NOT NULL DEFAULT 'true',
+        effect TEXT NOT NULL CHECK (effect IN ('allow','deny','require_approval','quarantine_agent')),
+        priority INTEGER NOT NULL DEFAULT 100,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        quarantine_minutes INTEGER DEFAULT 60,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO policies (id, name, description, agent_pattern, action_pattern, condition, effect, priority, enabled, quarantine_minutes, created_at, updated_at)
+      SELECT id, name, description, agent_pattern, action_pattern, condition, effect, priority, enabled,
+             COALESCE(quarantine_minutes, 60),
+             created_at, updated_at
+      FROM policies_old;
+      DROP TABLE policies_old;
+      CREATE INDEX IF NOT EXISTS idx_policies_eval ON policies(enabled, priority ASC, created_at ASC);
+      COMMIT;
+      PRAGMA foreign_keys=on;
+    `);
+  }
+}
 
 export function openDb(path: string): Database.Database {
   mkdirSync(dirname(path), { recursive: true });
@@ -57,10 +128,14 @@ export function openDb(path: string): Database.Database {
       decided_by TEXT,
       decided_at TEXT,
       decision_reason TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      session_id TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_approvals_agent_action_time
+      ON approvals(agent, action, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_approvals_session ON approvals(session_id, created_at DESC);
 
     CREATE TABLE IF NOT EXISTS audit_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,15 +156,36 @@ export function openDb(path: string): Database.Database {
       agent_pattern TEXT NOT NULL DEFAULT '*',
       action_pattern TEXT NOT NULL DEFAULT '*',
       condition TEXT NOT NULL DEFAULT 'true',
-      effect TEXT NOT NULL CHECK (effect IN ('allow','deny','require_approval')),
+      effect TEXT NOT NULL CHECK (effect IN ('allow','deny','require_approval','quarantine_agent')),
       priority INTEGER NOT NULL DEFAULT 100,
       enabled INTEGER NOT NULL DEFAULT 1,
+      quarantine_minutes INTEGER DEFAULT 60,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
     CREATE INDEX IF NOT EXISTS idx_policies_eval
       ON policies(enabled, priority ASC, created_at ASC);
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      agent TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','ended')),
+      metadata TEXT NOT NULL DEFAULT '{}',
+      started_at TEXT NOT NULL DEFAULT (datetime('now')),
+      ended_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent, started_at DESC);
+
+    CREATE TABLE IF NOT EXISTS agent_state (
+      agent TEXT PRIMARY KEY,
+      quarantined_until TEXT,
+      quarantine_reason TEXT,
+      quarantined_at TEXT,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
+  migrate(db);
   return db;
 }

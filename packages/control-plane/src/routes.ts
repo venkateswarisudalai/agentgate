@@ -1,13 +1,23 @@
 import type { FastifyInstance } from "fastify";
 import type Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
-import type { ApprovalRow, AuditRow, PolicyEffect, PolicyRow } from "./db.js";
+import type {
+  AgentStateRow,
+  ApprovalRow,
+  AuditRow,
+  PolicyEffect,
+  PolicyRow,
+  SessionRow,
+} from "./db.js";
 import { bus } from "./events.js";
 import {
-  evaluatePolicies,
+  clearQuarantine,
   evalCondition,
+  evaluatePolicies,
+  getQuarantineState,
   parseCondition,
   PolicyConditionError,
+  setQuarantine,
 } from "./policy.js";
 
 type CreateBody = {
@@ -15,6 +25,7 @@ type CreateBody = {
   action: string;
   reason: string;
   metadata?: Record<string, unknown>;
+  sessionId?: string;
 };
 
 type DecideBody = {
@@ -32,15 +43,32 @@ type PolicyBody = {
   effect: PolicyEffect;
   priority?: number;
   enabled?: boolean;
+  quarantineMinutes?: number;
 };
 
 type PolicyTestBody = {
   agent: string;
   action: string;
   metadata?: Record<string, unknown>;
+  sessionId?: string;
 };
 
-const VALID_EFFECTS: readonly PolicyEffect[] = ["allow", "deny", "require_approval"];
+type SessionCreateBody = {
+  agent: string;
+  metadata?: Record<string, unknown>;
+};
+
+type QuarantineBody = {
+  minutes?: number;
+  reason?: string;
+};
+
+const VALID_EFFECTS: readonly PolicyEffect[] = [
+  "allow",
+  "deny",
+  "require_approval",
+  "quarantine_agent",
+];
 
 function rowToPolicy(row: PolicyRow) {
   return {
@@ -53,7 +81,32 @@ function rowToPolicy(row: PolicyRow) {
     effect: row.effect,
     priority: row.priority,
     enabled: row.enabled === 1,
+    quarantineMinutes: row.quarantine_minutes ?? 60,
     createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function rowToSession(row: SessionRow) {
+  return {
+    id: row.id,
+    agent: row.agent,
+    status: row.status,
+    metadata: JSON.parse(row.metadata),
+    startedAt: row.started_at,
+    endedAt: row.ended_at,
+  };
+}
+
+function rowToAgentState(row: AgentStateRow) {
+  const quarantined =
+    !!row.quarantined_until && new Date(row.quarantined_until).getTime() > Date.now();
+  return {
+    agent: row.agent,
+    quarantined,
+    quarantinedUntil: row.quarantined_until,
+    quarantineReason: row.quarantine_reason,
+    quarantinedAt: row.quarantined_at,
     updatedAt: row.updated_at,
   };
 }
@@ -67,9 +120,16 @@ function normalizeCondition(condition: unknown): string {
   return JSON.stringify(condition);
 }
 
-function validateConditionShape(condition: unknown): string | null {
+async function validateConditionShape(
+  condition: unknown,
+  db: Database.Database,
+): Promise<string | null> {
   try {
-    evalCondition(condition, { agent: "_probe", action: "_probe", metadata: {} });
+    await evalCondition(
+      condition,
+      { agent: "_probe", action: "_probe", metadata: {} },
+      db,
+    );
     return null;
   } catch (err) {
     if (err instanceof PolicyConditionError) return err.message;
@@ -90,20 +150,115 @@ function rowToDecision(row: ApprovalRow) {
     decidedAt: row.decided_at,
     decisionReason: row.decision_reason,
     createdAt: row.created_at,
+    sessionId: row.session_id,
   };
 }
 
 export function registerRoutes(app: FastifyInstance, db: Database.Database): void {
+  // ---------- approvals ----------
+
   app.post<{ Body: CreateBody }>("/v1/approvals", async (req, reply) => {
-    const { agent, action, reason, metadata } = req.body ?? ({} as CreateBody);
+    const { agent, action, reason, metadata, sessionId } =
+      req.body ?? ({} as CreateBody);
     if (!agent || !action || !reason) {
       return reply.code(400).send({ error: "agent, action, and reason are required" });
     }
+
+    if (sessionId) {
+      const session = db
+        .prepare(`SELECT id FROM sessions WHERE id = ?`)
+        .get(sessionId) as { id: string } | undefined;
+      if (!session) {
+        return reply.code(400).send({ error: `unknown sessionId ${sessionId}` });
+      }
+    }
+
     const id = randomUUID();
     const meta = metadata ?? {};
     const metaJson = JSON.stringify(meta);
 
-    const match = evaluatePolicies(db, { agent, action, metadata: meta });
+    // Pre-policy: hard-block requests for quarantined agents.
+    const qState = getQuarantineState(db, agent);
+    if (qState.quarantined) {
+      const actor = "agentgate:quarantine";
+      db.prepare(
+        `INSERT INTO approvals
+           (id, agent, action, reason, metadata, status, decided_by, decided_at, decision_reason, session_id)
+         VALUES (?, ?, ?, ?, ?, 'denied', ?, datetime('now'), ?, ?)`,
+      ).run(
+        id,
+        agent,
+        action,
+        reason,
+        metaJson,
+        actor,
+        `agent quarantined until ${qState.until}: ${qState.reason ?? ""}`.trim(),
+        sessionId ?? null,
+      );
+      db.prepare(
+        `INSERT INTO audit_log (approval_id, event, actor, payload)
+         VALUES (?, 'approval.created', ?, ?)`,
+      ).run(id, agent, metaJson);
+      db.prepare(
+        `INSERT INTO audit_log (approval_id, event, actor, payload)
+         VALUES (?, 'approval.quarantine_blocked', ?, ?)`,
+      ).run(id, actor, JSON.stringify({ until: qState.until, reason: qState.reason }));
+      bus.emitEvent({ type: "approval.created", approvalId: id });
+      bus.emitEvent({ type: "approval.decided", approvalId: id, status: "denied" });
+      return reply.code(201).send({
+        id,
+        status: "denied",
+        decidedBy: actor,
+        quarantine: { until: qState.until, reason: qState.reason },
+      });
+    }
+
+    const match = await evaluatePolicies(db, {
+      agent,
+      action,
+      metadata: meta,
+      sessionId: sessionId ?? null,
+    });
+
+    // quarantine_agent effect: set state, deny current, audit.
+    if (match && match.effect === "quarantine_agent") {
+      const minutes = match.quarantineMinutes ?? 60;
+      const reasonText = `policy ${match.policyName} triggered auto-quarantine`;
+      const until = setQuarantine(db, agent, minutes, reasonText);
+      const actor = `policy:${match.policyName}`;
+      db.prepare(
+        `INSERT INTO approvals
+           (id, agent, action, reason, metadata, status, decided_by, decided_at, decision_reason, session_id)
+         VALUES (?, ?, ?, ?, ?, 'denied', ?, datetime('now'), ?, ?)`,
+      ).run(id, agent, action, reason, metaJson, actor, reasonText, sessionId ?? null);
+      db.prepare(
+        `INSERT INTO audit_log (approval_id, event, actor, payload)
+         VALUES (?, 'approval.created', ?, ?)`,
+      ).run(id, agent, metaJson);
+      db.prepare(
+        `INSERT INTO audit_log (approval_id, event, actor, payload)
+         VALUES (?, 'approval.auto_quarantined', ?, ?)`,
+      ).run(
+        id,
+        actor,
+        JSON.stringify({
+          policyId: match.policyId,
+          policyName: match.policyName,
+          quarantineMinutes: minutes,
+          quarantinedUntil: until,
+        }),
+      );
+      bus.emitEvent({ type: "approval.created", approvalId: id });
+      bus.emitEvent({ type: "approval.decided", approvalId: id, status: "denied" });
+      bus.emitEvent({ type: "agent.quarantined", agent, until });
+      return reply.code(201).send({
+        id,
+        status: "denied",
+        decidedBy: actor,
+        quarantine: { until, minutes, reason: reasonText },
+      });
+    }
+
     const autoDecide =
       match && (match.effect === "allow" || match.effect === "deny") ? match : null;
 
@@ -112,8 +267,8 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
       const actor = `policy:${autoDecide.policyName}`;
       db.prepare(
         `INSERT INTO approvals
-           (id, agent, action, reason, metadata, status, decided_by, decided_at, decision_reason)
-         VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)`,
+           (id, agent, action, reason, metadata, status, decided_by, decided_at, decision_reason, session_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)`,
       ).run(
         id,
         agent,
@@ -123,6 +278,7 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
         status,
         actor,
         `auto-${status} by policy ${autoDecide.policyName}`,
+        sessionId ?? null,
       );
       db.prepare(
         `INSERT INTO audit_log (approval_id, event, actor, payload)
@@ -145,9 +301,9 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
     }
 
     db.prepare(
-      `INSERT INTO approvals (id, agent, action, reason, metadata, status)
-       VALUES (?, ?, ?, ?, ?, 'pending')`,
-    ).run(id, agent, action, reason, metaJson);
+      `INSERT INTO approvals (id, agent, action, reason, metadata, status, session_id)
+       VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+    ).run(id, agent, action, reason, metaJson, sessionId ?? null);
     db.prepare(
       `INSERT INTO audit_log (approval_id, event, actor, payload)
        VALUES (?, 'approval.created', ?, ?)`,
@@ -174,22 +330,27 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
     return rowToDecision(row);
   });
 
-  app.get<{ Querystring: { status?: string; limit?: string } }>(
+  app.get<{ Querystring: { status?: string; limit?: string; sessionId?: string } }>(
     "/v1/approvals",
     async (req) => {
       const status = req.query.status;
+      const sessionId = req.query.sessionId;
       const limit = Math.min(parseInt(req.query.limit ?? "100", 10) || 100, 500);
-      const rows = (
-        status
-          ? db
-              .prepare(
-                `SELECT * FROM approvals WHERE status = ? ORDER BY created_at DESC LIMIT ?`,
-              )
-              .all(status, limit)
-          : db
-              .prepare(`SELECT * FROM approvals ORDER BY created_at DESC LIMIT ?`)
-              .all(limit)
-      ) as ApprovalRow[];
+      const conds: string[] = [];
+      const params: unknown[] = [];
+      if (status) {
+        conds.push("status = ?");
+        params.push(status);
+      }
+      if (sessionId) {
+        conds.push("session_id = ?");
+        params.push(sessionId);
+      }
+      const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+      params.push(limit);
+      const rows = db
+        .prepare(`SELECT * FROM approvals ${where} ORDER BY created_at DESC LIMIT ?`)
+        .all(...params) as ApprovalRow[];
       return rows.map(rowToDecision);
     },
   );
@@ -256,6 +417,118 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
     }));
   });
 
+  // ---------- sessions ----------
+
+  app.post<{ Body: SessionCreateBody }>("/v1/sessions", async (req, reply) => {
+    const { agent, metadata } = req.body ?? ({} as SessionCreateBody);
+    if (!agent) return reply.code(400).send({ error: "agent is required" });
+    const id = randomUUID();
+    db.prepare(
+      `INSERT INTO sessions (id, agent, status, metadata) VALUES (?, ?, 'active', ?)`,
+    ).run(id, agent, JSON.stringify(metadata ?? {}));
+    bus.emitEvent({ type: "session.started", sessionId: id, agent });
+    const row = db.prepare(`SELECT * FROM sessions WHERE id = ?`).get(id) as SessionRow;
+    return reply.code(201).send(rowToSession(row));
+  });
+
+  app.get<{ Params: { id: string } }>("/v1/sessions/:id", async (req, reply) => {
+    const row = db
+      .prepare(`SELECT * FROM sessions WHERE id = ?`)
+      .get(req.params.id) as SessionRow | undefined;
+    if (!row) return reply.code(404).send({ error: "not found" });
+    const approvals = db
+      .prepare(
+        `SELECT * FROM approvals WHERE session_id = ? ORDER BY created_at ASC`,
+      )
+      .all(req.params.id) as ApprovalRow[];
+    return { ...rowToSession(row), approvals: approvals.map(rowToDecision) };
+  });
+
+  app.post<{ Params: { id: string } }>(
+    "/v1/sessions/:id/end",
+    async (req, reply) => {
+      const result = db
+        .prepare(
+          `UPDATE sessions SET status = 'ended', ended_at = datetime('now')
+           WHERE id = ? AND status = 'active'`,
+        )
+        .run(req.params.id);
+      if (result.changes === 0) {
+        return reply.code(404).send({ error: "session not found or already ended" });
+      }
+      const row = db
+        .prepare(`SELECT * FROM sessions WHERE id = ?`)
+        .get(req.params.id) as SessionRow;
+      bus.emitEvent({ type: "session.ended", sessionId: row.id, agent: row.agent });
+      return rowToSession(row);
+    },
+  );
+
+  app.get<{ Querystring: { agent?: string; status?: string; limit?: string } }>(
+    "/v1/sessions",
+    async (req) => {
+      const conds: string[] = [];
+      const params: unknown[] = [];
+      if (req.query.agent) {
+        conds.push("agent = ?");
+        params.push(req.query.agent);
+      }
+      if (req.query.status) {
+        conds.push("status = ?");
+        params.push(req.query.status);
+      }
+      const limit = Math.min(parseInt(req.query.limit ?? "100", 10) || 100, 500);
+      const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+      params.push(limit);
+      const rows = db
+        .prepare(`SELECT * FROM sessions ${where} ORDER BY started_at DESC LIMIT ?`)
+        .all(...params) as SessionRow[];
+      return rows.map(rowToSession);
+    },
+  );
+
+  // ---------- agent state / quarantine ----------
+
+  app.get<{ Params: { agent: string } }>("/v1/agents/:agent", async (req) => {
+    const row = db
+      .prepare(`SELECT * FROM agent_state WHERE agent = ?`)
+      .get(req.params.agent) as AgentStateRow | undefined;
+    if (!row) {
+      return {
+        agent: req.params.agent,
+        quarantined: false,
+        quarantinedUntil: null,
+        quarantineReason: null,
+        quarantinedAt: null,
+        updatedAt: null,
+      };
+    }
+    return rowToAgentState(row);
+  });
+
+  app.post<{ Params: { agent: string }; Body: QuarantineBody }>(
+    "/v1/agents/:agent/quarantine",
+    async (req, reply) => {
+      const minutes = Math.max(1, Math.floor(req.body?.minutes ?? 60));
+      const reason = req.body?.reason ?? "manual quarantine";
+      const until = setQuarantine(db, req.params.agent, minutes, reason);
+      bus.emitEvent({ type: "agent.quarantined", agent: req.params.agent, until });
+      return reply.code(200).send({ agent: req.params.agent, quarantinedUntil: until, reason });
+    },
+  );
+
+  app.delete<{ Params: { agent: string } }>(
+    "/v1/agents/:agent/quarantine",
+    async (req, reply) => {
+      const cleared = clearQuarantine(db, req.params.agent);
+      if (!cleared) return reply.code(404).send({ error: "no active quarantine" });
+      bus.emitEvent({ type: "agent.released", agent: req.params.agent });
+      return reply.code(200).send({ agent: req.params.agent, quarantined: false });
+    },
+  );
+
+  // ---------- policies ----------
+
   app.get("/v1/policies", async () => {
     const rows = db
       .prepare(`SELECT * FROM policies ORDER BY priority ASC, created_at ASC`)
@@ -285,15 +558,15 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
     } catch {
       return reply.code(400).send({ error: "condition must be valid JSON" });
     }
-    const condErr = validateConditionShape(JSON.parse(conditionJson));
+    const condErr = await validateConditionShape(JSON.parse(conditionJson), db);
     if (condErr) return reply.code(400).send({ error: condErr });
 
     const id = randomUUID();
     try {
       db.prepare(
         `INSERT INTO policies
-           (id, name, description, agent_pattern, action_pattern, condition, effect, priority, enabled)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (id, name, description, agent_pattern, action_pattern, condition, effect, priority, enabled, quarantine_minutes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         id,
         body.name,
@@ -304,6 +577,7 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
         body.effect,
         body.priority ?? 100,
         body.enabled === false ? 0 : 1,
+        Math.max(1, Math.floor(body.quarantineMinutes ?? 60)),
       );
     } catch (err) {
       const msg = (err as Error).message;
@@ -333,7 +607,7 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
         } catch {
           return reply.code(400).send({ error: "condition must be valid JSON" });
         }
-        const condErr = validateConditionShape(JSON.parse(conditionJson));
+        const condErr = await validateConditionShape(JSON.parse(conditionJson), db);
         if (condErr) return reply.code(400).send({ error: condErr });
       }
 
@@ -347,6 +621,7 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
            effect = COALESCE(?, effect),
            priority = COALESCE(?, priority),
            enabled = COALESCE(?, enabled),
+           quarantine_minutes = COALESCE(?, quarantine_minutes),
            updated_at = datetime('now')
          WHERE id = ?`,
       ).run(
@@ -358,6 +633,9 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
         body.effect ?? null,
         body.priority ?? null,
         body.enabled === undefined ? null : body.enabled ? 1 : 0,
+        body.quarantineMinutes === undefined
+          ? null
+          : Math.max(1, Math.floor(body.quarantineMinutes)),
         req.params.id,
       );
       const updated = db
@@ -374,20 +652,34 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
   });
 
   app.post<{ Body: PolicyTestBody }>("/v1/policies/test", async (req, reply) => {
-    const { agent, action, metadata } = req.body ?? ({} as PolicyTestBody);
+    const { agent, action, metadata, sessionId } = req.body ?? ({} as PolicyTestBody);
     if (!agent || !action) {
       return reply.code(400).send({ error: "agent and action are required" });
     }
-    const match = evaluatePolicies(db, { agent, action, metadata: metadata ?? {} });
+    const match = await evaluatePolicies(db, {
+      agent,
+      action,
+      metadata: metadata ?? {},
+      sessionId: sessionId ?? null,
+    });
     if (!match) return { match: null, decision: "pending" };
+    const decision =
+      match.effect === "allow" ? "approved"
+      : match.effect === "deny" ? "denied"
+      : match.effect === "quarantine_agent" ? "denied"
+      : "pending";
     return {
-      match: { policyId: match.policyId, policyName: match.policyName, effect: match.effect },
-      decision:
-        match.effect === "allow" ? "approved"
-        : match.effect === "deny" ? "denied"
-        : "pending",
+      match: {
+        policyId: match.policyId,
+        policyName: match.policyName,
+        effect: match.effect,
+        quarantineMinutes: match.quarantineMinutes,
+      },
+      decision,
     };
   });
+
+  // ---------- events / health ----------
 
   app.get("/v1/events", async (req, reply) => {
     reply.raw.writeHead(200, {
