@@ -5,6 +5,7 @@ import type {
   AgentStateRow,
   ApprovalRow,
   AuditRow,
+  CredentialRow,
   PolicyEffect,
   PolicyRow,
   SessionRow,
@@ -19,6 +20,13 @@ import {
   PolicyConditionError,
   setQuarantine,
 } from "./policy.js";
+import {
+  CredentialError,
+  getCredential,
+  issueCredential,
+  revokeCredential,
+  verifyCredential,
+} from "./credentials.js";
 
 type CreateBody = {
   agent: string;
@@ -62,6 +70,49 @@ type QuarantineBody = {
   minutes?: number;
   reason?: string;
 };
+
+type CredentialIssueBody = {
+  approvalId: string;
+  scope?: unknown;
+  ttlSeconds?: number;
+  maxUses?: number;
+};
+
+type CredentialVerifyBody = {
+  token: string;
+  action?: string;
+  agent?: string;
+  metadata?: Record<string, unknown>;
+};
+
+type CredentialRevokeBody = {
+  reason?: string;
+};
+
+function rowToCredential(row: CredentialRow) {
+  let scope: unknown = true;
+  try {
+    scope = JSON.parse(row.scope);
+  } catch {
+    /* fall through */
+  }
+  return {
+    id: row.id,
+    approvalId: row.approval_id,
+    agent: row.agent,
+    action: row.action,
+    scope,
+    maxUses: row.max_uses,
+    useCount: row.use_count,
+    remainingUses: Math.max(0, row.max_uses - row.use_count),
+    issuedAt: row.issued_at,
+    expiresAt: row.expires_at,
+    expired: new Date(row.expires_at).getTime() <= Date.now(),
+    revoked: row.revoked === 1,
+    revokedAt: row.revoked_at,
+    revokedReason: row.revoked_reason,
+  };
+}
 
 const VALID_EFFECTS: readonly PolicyEffect[] = [
   "allow",
@@ -678,6 +729,112 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
       decision,
     };
   });
+
+  // ---------- credentials ----------
+
+  app.post<{ Body: CredentialIssueBody }>("/v1/credentials", async (req, reply) => {
+    const body = req.body ?? ({} as CredentialIssueBody);
+    if (!body.approvalId) {
+      return reply.code(400).send({ error: "approvalId is required" });
+    }
+    try {
+      const result = issueCredential(db, {
+        approvalId: body.approvalId,
+        scope: body.scope,
+        ttlSeconds: body.ttlSeconds,
+        maxUses: body.maxUses,
+      });
+      db.prepare(
+        `INSERT INTO audit_log (approval_id, event, actor, payload)
+         VALUES (?, 'credential.issued', ?, ?)`,
+      ).run(
+        body.approvalId,
+        "agentgate:control-plane",
+        JSON.stringify({
+          credentialId: result.credentialId,
+          agent: result.agent,
+          action: result.action,
+          expiresAt: result.expiresAt,
+        }),
+      );
+      return reply.code(201).send(result);
+    } catch (err) {
+      if (err instanceof CredentialError) {
+        const status = err.code === "approval_not_found" ? 404 : 400;
+        return reply.code(status).send({ error: err.message, code: err.code });
+      }
+      throw err;
+    }
+  });
+
+  app.get<{ Params: { id: string } }>("/v1/credentials/:id", async (req, reply) => {
+    const row = getCredential(db, req.params.id);
+    if (!row) return reply.code(404).send({ error: "not found" });
+    return rowToCredential(row);
+  });
+
+  app.post<{ Body: CredentialVerifyBody }>(
+    "/v1/credentials/verify",
+    async (req, reply) => {
+      const body = req.body ?? ({} as CredentialVerifyBody);
+      if (!body.token) return reply.code(400).send({ error: "token is required" });
+      try {
+        const result = await verifyCredential(db, {
+          token: body.token,
+          action: body.action,
+          agent: body.agent,
+          metadata: body.metadata,
+        });
+        return result;
+      } catch (err) {
+        if (err instanceof CredentialError) {
+          return reply.code(403).send({
+            valid: false,
+            code: err.code,
+            error: err.message,
+          });
+        }
+        throw err;
+      }
+    },
+  );
+
+  app.post<{ Params: { id: string }; Body: CredentialRevokeBody }>(
+    "/v1/credentials/:id/revoke",
+    async (req, reply) => {
+      const reason = req.body?.reason ?? "manual revocation";
+      const ok = revokeCredential(db, req.params.id, reason);
+      if (!ok)
+        return reply.code(404).send({ error: "not found or already revoked" });
+      const row = getCredential(db, req.params.id);
+      return rowToCredential(row!);
+    },
+  );
+
+  app.get<{ Querystring: { agent?: string; approvalId?: string; limit?: string } }>(
+    "/v1/credentials",
+    async (req) => {
+      const conds: string[] = [];
+      const params: unknown[] = [];
+      if (req.query.agent) {
+        conds.push("agent = ?");
+        params.push(req.query.agent);
+      }
+      if (req.query.approvalId) {
+        conds.push("approval_id = ?");
+        params.push(req.query.approvalId);
+      }
+      const limit = Math.min(parseInt(req.query.limit ?? "100", 10) || 100, 500);
+      const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+      params.push(limit);
+      const rows = db
+        .prepare(
+          `SELECT * FROM credentials ${where} ORDER BY issued_at DESC LIMIT ?`,
+        )
+        .all(...params) as CredentialRow[];
+      return rows.map(rowToCredential);
+    },
+  );
 
   // ---------- events / health ----------
 
