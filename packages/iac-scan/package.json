@@ -1,0 +1,14 @@
+{
+  "name": "@agentgate/iac-scan",
+  "version": "0.0.1",
+  "description": "Blast-radius scoring for infrastructure-as-code changes. Parses Terraform plans and kubectl dry-runs into structured signals before the agent acts.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0"
+  }
+}

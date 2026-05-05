@@ -1,0 +1,18 @@
+{
+  "name": "@agentgate/example-iac-blast-demo",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Demo: agent submits a Terraform plan / kubectl dry-run; agentgate scores blast radius before approval; policies act on the structured signals.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "tsc -p tsconfig.json && node dist/index.js"
+  },
+  "dependencies": {
+    "@agentgate/sdk": "*",
+    "@agentgate/iac-scan": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0"
+  }
+}
