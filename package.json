@@ -9,10 +9,12 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
     "start": "npm run start --workspace=@agentgate/control-plane",
     "example": "npm run start --workspace=@agentgate/example-dangerous-agent"
   },
   "devDependencies": {
+    "tsx": "^4.19.2",
     "typescript": "^5.6.3"
   },
   "engines": {
