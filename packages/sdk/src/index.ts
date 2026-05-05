@@ -15,6 +15,30 @@ export type Session = {
   endedAt: string | null;
 };
 
+export type IssuedCredential = {
+  credentialId: string;
+  token: string;
+  expiresAt: string;
+  agent: string;
+  action: string;
+};
+
+export type CredentialVerification =
+  | {
+      valid: true;
+      credentialId: string;
+      agent: string;
+      action: string;
+      remainingUses: number;
+      expiresAt: string;
+      scope: unknown;
+    }
+  | {
+      valid: false;
+      code: string;
+      error: string;
+    };
+
 export type Decision = {
   id: string;
   approved: boolean;
@@ -74,6 +98,45 @@ export class AgentGate {
       throw new Error(`Failed to begin session: ${res.status} ${await res.text()}`);
     }
     return (await res.json()) as Session;
+  }
+
+  async issueCredential(input: {
+    approvalId: string;
+    scope?: unknown;
+    ttlSeconds?: number;
+    maxUses?: number;
+  }): Promise<IssuedCredential> {
+    const res = await this.fetch("/v1/credentials", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to issue credential: ${res.status} ${await res.text()}`);
+    }
+    return (await res.json()) as IssuedCredential;
+  }
+
+  async verifyCredential(input: {
+    token: string;
+    action?: string;
+    agent?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<CredentialVerification> {
+    const res = await this.fetch("/v1/credentials/verify", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+    return (await res.json()) as CredentialVerification;
+  }
+
+  async revokeCredential(credentialId: string, reason?: string): Promise<void> {
+    const res = await this.fetch(`/v1/credentials/${credentialId}/revoke`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to revoke credential: ${res.status} ${await res.text()}`);
+    }
   }
 
   async endSession(sessionId: string): Promise<Session> {

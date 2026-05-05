@@ -63,6 +63,27 @@ export type AgentStateRow = {
   updated_at: string;
 };
 
+export type CredentialRow = {
+  id: string;
+  approval_id: string;
+  agent: string;
+  action: string;
+  scope: string;
+  max_uses: number;
+  use_count: number;
+  expires_at: string;
+  issued_at: string;
+  revoked: number;
+  revoked_at: string | null;
+  revoked_reason: string | null;
+};
+
+export type SecretRow = {
+  key: string;
+  value: string;
+  created_at: string;
+};
+
 type ColumnInfo = { name: string };
 
 function hasColumn(db: Database.Database, table: string, column: string): boolean {
@@ -184,6 +205,33 @@ export function openDb(path: string): Database.Database {
       quarantine_reason TEXT,
       quarantined_at TEXT,
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS credentials (
+      id TEXT PRIMARY KEY,
+      approval_id TEXT NOT NULL,
+      agent TEXT NOT NULL,
+      action TEXT NOT NULL,
+      scope TEXT NOT NULL DEFAULT '{}',
+      max_uses INTEGER NOT NULL DEFAULT 1,
+      use_count INTEGER NOT NULL DEFAULT 0,
+      expires_at TEXT NOT NULL,
+      issued_at TEXT NOT NULL DEFAULT (datetime('now')),
+      revoked INTEGER NOT NULL DEFAULT 0,
+      revoked_at TEXT,
+      revoked_reason TEXT,
+      FOREIGN KEY (approval_id) REFERENCES approvals(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_credentials_agent_time
+      ON credentials(agent, issued_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_credentials_approval
+      ON credentials(approval_id);
+
+    CREATE TABLE IF NOT EXISTS secrets (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
   migrate(db);
