@@ -300,6 +300,77 @@ const BASH_RULES: BashRule[] = [
       };
     } },
 
+  { id: "shipit-rollback", category: "infra", severity: "medium",
+    description: "shipit apps rollback",
+    pattern: /\bshipit\s+apps\s+rollback\b/,
+    describe: (cmd) => {
+      const app = cmd.match(/shipit\s+apps\s+rollback\s+(\S+)/)?.[1] ?? "(app?)";
+      const rev = arg(cmd, "--revision", "-r");
+      return {
+        headline: `Roll back Shipit app '${app}'${rev ? ` to revision ${rev}` : " to the previous revision"}.`,
+        consequences: [
+          "The running deployment is replaced with an older container image",
+          "Any state written by the current revision (DB migrations, schema changes) is NOT reverted",
+          "Brief request errors during the rolling switchover",
+        ],
+        recoverable: "yes",
+        targets: { app, ...(rev ? { revision: rev } : {}) },
+      };
+    } },
+
+  { id: "shipit-deploy", category: "infra", severity: "high",
+    description: "shipit deploy / apps deploy",
+    pattern: /\bshipit\s+(deploy|apps\s+deploy)\b/,
+    describe: (cmd) => {
+      const app = cmd.match(/shipit\s+(?:apps\s+)?deploy\s+(\S+)/)?.[1] ?? "(app?)";
+      return {
+        headline: `Deploy a new revision of Shipit app '${app}' to the cluster.`,
+        consequences: [
+          "A new pod replicaset is created and traffic is shifted to it",
+          "If the new revision is bad you'll need to roll back",
+          "Any side-effects of new code (writes, jobs, migrations) start happening immediately",
+        ],
+        recoverable: "partial",
+        targets: { app },
+      };
+    } },
+
+  { id: "shipit-app-delete", category: "infra", severity: "high",
+    description: "shipit apps delete",
+    pattern: /\bshipit\s+apps\s+delete\b/,
+    describe: (cmd) => {
+      const app = cmd.match(/shipit\s+apps\s+delete\s+(\S+)/)?.[1] ?? "(app?)";
+      return {
+        headline: `Delete Shipit app '${app}' from the cluster.`,
+        consequences: [
+          "The Deployment, Service, and revision history are removed",
+          "Live traffic to this app's endpoint immediately fails",
+          "Re-creating the app does not restore prior revision history",
+        ],
+        recoverable: "no",
+        targets: { app },
+      };
+    } },
+
+  { id: "shipit-secrets-write", category: "secrets", severity: "high",
+    description: "shipit secrets set / delete",
+    pattern: /\bshipit\s+secrets\s+(set|delete|unset|remove)\b/,
+    describe: (cmd) => {
+      const verb = cmd.match(/shipit\s+secrets\s+(\w+)/)?.[1] ?? "?";
+      const app = cmd.match(/shipit\s+secrets\s+\w+\s+(\S+)/)?.[1] ?? "(app?)";
+      const key = cmd.match(/shipit\s+secrets\s+\w+\s+\S+\s+(\S+)/)?.[1];
+      return {
+        headline: `shipit secrets ${verb} on '${app}'${key ? ` (key: ${key})` : ""} — mutates encrypted env.`,
+        consequences: [
+          "Next deploy of this app will use the new (or absent) secret value",
+          "Secret writes are NOT diffable — there's no easy way to inspect what changed",
+          "Removing a secret in use will break the app on next pod restart",
+        ],
+        recoverable: "partial",
+        targets: { verb, app, ...(key ? { key } : {}) },
+      };
+    } },
+
   // ===== cloud =====
   { id: "aws-s3-rb", category: "cloud", severity: "high",
     description: "Delete S3 bucket",
