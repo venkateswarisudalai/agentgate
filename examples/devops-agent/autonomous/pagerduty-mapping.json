@@ -1,0 +1,6 @@
+{
+  "_comment": "Maps PagerDuty service.summary → Shipit app + namespace. Edit for your environment.",
+  "orders-api": { "app": "orders-api", "namespace": "shipit" },
+  "checkout-service": { "app": "checkout", "namespace": "shipit" },
+  "payments-api": { "app": "payments-api", "namespace": "shipit" }
+}

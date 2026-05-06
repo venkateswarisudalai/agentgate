@@ -1,0 +1,20 @@
+{
+  "name": "@agentgate/example-devops-agent-autonomous",
+  "version": "0.0.1",
+  "private": true,
+  "description": "PagerDuty-triggered autonomous mode for the agentgate DevOps agent",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "tsc -p tsconfig.json && node dist/server.js",
+    "fixture": "tsc -p tsconfig.json && node dist/server.js --fixture fixtures/crashloop.json"
+  },
+  "dependencies": {
+    "@agentgate/sdk": "*",
+    "fastify": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "typescript": "^5.6.3"
+  }
+}

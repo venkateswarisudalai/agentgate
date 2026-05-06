@@ -1,0 +1,19 @@
+{
+  "event": {
+    "id": "evt-fixture-crashloop-001",
+    "event_type": "incident.triggered",
+    "occurred_at": "2026-05-06T14:23:00Z",
+    "data": {
+      "id": "PINC-2026-0506-CL-42",
+      "type": "incident",
+      "title": "orders-api: pods entering CrashLoopBackOff",
+      "summary": "orders-api: pods entering CrashLoopBackOff (3/3 unhealthy)",
+      "urgency": "high",
+      "priority": { "summary": "P2" },
+      "service": {
+        "summary": "orders-api"
+      },
+      "html_url": "https://example.pagerduty.com/incidents/PINC-2026-0506-CL-42"
+    }
+  }
+}
