@@ -66,6 +66,42 @@
       .audit .ev-created { color: var(--link); }
       .audit .ev-approved { color: var(--accent); }
       .audit .ev-denied { color: var(--danger); }
+
+      /* tabs */
+      .tabs { display: flex; gap: 4px; padding: 0 20px; border-bottom: 1px solid var(--border); background: var(--bg); }
+      .tab { padding: 10px 16px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; font-size: 13px; font-weight: 500; user-select: none; }
+      .tab:hover { color: var(--text); }
+      .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+      .view { display: none; }
+      main.view.active { display: grid; }
+      div.view.active { display: block; }
+
+      /* demo tab */
+      .demo-wrap { padding: 16px; max-width: 1400px; margin: 0 auto; }
+      .demo-intro { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; margin-bottom: 16px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+      .demo-intro .title { font-size: 15px; font-weight: 600; }
+      .demo-intro .sub { color: var(--muted); font-size: 13px; margin-top: 4px; max-width: 720px; }
+      .demo-intro .actions { margin-left: auto; display: flex; gap: 8px; }
+      .demo-intro .actions .btn { padding: 8px 14px; font-weight: 600; }
+      .scenarios { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 12px; }
+      .scn { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+      .scn .head { display: flex; align-items: center; gap: 10px; }
+      .scn .emoji { font-size: 22px; line-height: 1; }
+      .scn .name { font-weight: 600; font-size: 14px; }
+      .scn .pitch { color: var(--muted); font-size: 13px; line-height: 1.5; }
+      .scn .meta-row { display: flex; gap: 6px; flex-wrap: wrap; }
+      .scn .out { font-size: 12px; color: var(--muted); }
+      .scn .last { font-size: 12px; padding: 6px 8px; border-radius: 4px; background: rgba(124,243,160,0.05); border-left: 2px solid var(--accent); color: var(--text); }
+      .scn .last.denied { background: rgba(255,107,107,0.05); border-left-color: var(--danger); }
+      .scn .last.error { background: rgba(255,209,102,0.05); border-left-color: var(--warn); }
+      .scn .controls { display: flex; gap: 8px; margin-top: auto; }
+      .scn .controls .btn { flex: 1; }
+      .scn.running { box-shadow: 0 0 0 1px var(--warn); }
+      .scn.running .controls .btn { opacity: 0.6; cursor: progress; }
+
+      /* demo footer */
+      .demo-footer { margin-top: 20px; padding: 14px 20px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+      .demo-footer code { background: var(--panel-2); padding: 1px 6px; border-radius: 3px; color: var(--text); font-size: 12px; }
     </style>
   </head>
   <body>
@@ -74,7 +110,11 @@
       <span class="tag">production safety for AI agents</span>
       <span class="live"><span class="dot" id="dot"></span><span id="livetext">connecting…</span></span>
     </header>
-    <main>
+    <nav class="tabs">
+      <div class="tab" data-tab="live">Live</div>
+      <div class="tab" data-tab="demo">Demo</div>
+    </nav>
+    <main id="view-live" class="view">
       <section>
         <h2>Pending approvals</h2>
         <div class="list" id="pending"></div>
@@ -84,6 +124,27 @@
         <div class="audit" id="audit"></div>
       </section>
     </main>
+    <div id="view-demo" class="view">
+      <div class="demo-wrap">
+        <div class="demo-intro">
+          <div>
+            <div class="title">Watch agentgate in action — no install required</div>
+            <div class="sub">Click any scenario to spawn a synthetic agent that tries something risky against this control plane. The approval will appear on the Live tab. Approve or deny it, then come back to run the next one.</div>
+          </div>
+          <div class="actions">
+            <button class="btn approve" id="run-all">▶ Run all 5</button>
+            <button class="btn" id="reset-demo">Reset demo</button>
+          </div>
+        </div>
+        <div class="scenarios" id="scenarios"></div>
+        <div class="demo-footer">
+          <strong>What just happened?</strong> Each scenario is a real synthetic agent calling the agentgate SDK
+          (<code>requireApproval()</code>) against this server. Two scenarios trigger seeded policies (auto-deny + quarantine);
+          the rest pause for you. Every action is recorded in the audit log on the Live tab.
+          To wire your own agent in 3 lines: <code>npm install @agentgate/sdk</code>.
+        </div>
+      </div>
+    </div>
     <script>
       const API = "";
 
@@ -210,11 +271,102 @@
         const txt = document.getElementById("livetext");
         es.onopen = () => { dot.classList.add("on"); txt.textContent = "live"; };
         es.onerror = () => { dot.classList.remove("on"); txt.textContent = "reconnecting…"; };
-        es.onmessage = () => { refreshPending(); refreshAudit(); };
+        es.onmessage = () => { refreshPending(); refreshAudit(); refreshScenarios(); };
       }
 
+      // ----- tabs -----
+      function setTab(name) {
+        document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
+        document.getElementById("view-live").classList.toggle("active", name === "live");
+        document.getElementById("view-demo").classList.toggle("active", name === "demo");
+        const url = new URL(window.location.href);
+        if (name === "demo") url.searchParams.set("tab", "demo");
+        else url.searchParams.delete("tab");
+        window.history.replaceState({}, "", url.toString());
+      }
+      document.querySelectorAll(".tab").forEach((t) => {
+        t.addEventListener("click", () => setTab(t.dataset.tab));
+      });
+
+      // ----- demo -----
+      function renderScenario(s) {
+        const lastBlock = s.lastResult
+          ? `<div class="last ${s.lastResult.status}">last run: <strong>${escapeHtml(s.lastResult.status)}</strong> — ${escapeHtml(s.lastResult.message)}</div>`
+          : "";
+        const runLabel = s.running ? "running…" : `▶ Run`;
+        const expectChip = `<span class="chip">${escapeHtml(s.expectedEffect)}</span>`;
+        return `
+          <div class="scn ${s.running ? "running" : ""}" data-id="${s.id}">
+            <div class="head">
+              <span class="emoji">${escapeHtml(s.emoji)}</span>
+              <span class="name">${escapeHtml(s.title)}</span>
+            </div>
+            <div class="meta-row">${expectChip}<span class="chip">${escapeHtml(s.agent)}</span></div>
+            <div class="pitch">${escapeHtml(s.pitch)}</div>
+            <div class="out">Outcome: ${escapeHtml(s.outcomeHint)}</div>
+            ${lastBlock}
+            <div class="controls">
+              <button class="btn approve" data-run="${s.id}" ${s.running ? "disabled" : ""}>${runLabel}</button>
+            </div>
+          </div>`;
+      }
+
+      async function refreshScenarios() {
+        const el = document.getElementById("scenarios");
+        if (!el) return;
+        try {
+          const rows = await getJSON("/v1/demo/scenarios");
+          el.innerHTML = rows.map(renderScenario).join("");
+        } catch (err) {
+          el.innerHTML = `<div class="empty">Failed to load scenarios: ${escapeHtml(err.message)}</div>`;
+        }
+      }
+
+      document.addEventListener("click", async (e) => {
+        const runBtn = e.target.closest("[data-run]");
+        if (runBtn && !runBtn.disabled) {
+          const id = runBtn.dataset.run;
+          runBtn.disabled = true;
+          runBtn.textContent = "starting…";
+          try {
+            await postJSON(`/v1/demo/run/${id}`, {});
+            setTimeout(refreshScenarios, 300);
+          } catch (err) {
+            alert("Failed to start: " + err.message);
+            runBtn.disabled = false;
+          }
+          return;
+        }
+        if (e.target.id === "run-all") {
+          e.target.disabled = true;
+          try {
+            await postJSON("/v1/demo/run-all", {});
+            setTimeout(refreshScenarios, 300);
+          } catch (err) {
+            alert("Failed: " + err.message);
+          } finally {
+            setTimeout(() => { e.target.disabled = false; }, 1000);
+          }
+          return;
+        }
+        if (e.target.id === "reset-demo") {
+          if (!confirm("Wipe all demo approvals, sessions, and quarantine state? (Real data is untouched.)")) return;
+          try {
+            await postJSON("/v1/demo/reset", {});
+            await Promise.all([refreshPending(), refreshAudit(), refreshScenarios()]);
+          } catch (err) {
+            alert("Reset failed: " + err.message);
+          }
+          return;
+        }
+      });
+
+      // ----- bootstrap -----
+      const initialTab = new URL(window.location.href).searchParams.get("tab") === "demo" ? "demo" : "live";
+      setTab(initialTab);
       refreshPending();
       refreshAudit();
+      refreshScenarios();
       connectSSE();
     </script>
   </body>

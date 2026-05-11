@@ -21,18 +21,33 @@ The existing IAM, RBAC, and approval tooling assumed the actor was a human or a 
 
 ## Quickstart
 
+The fastest way to feel the product is the built-in demo — no agent code required:
+
+```bash
+npm install
+npm run demo                   # builds + starts control plane on :4000
+open http://localhost:4000?tab=demo
+```
+
+Click any of the 5 scenarios (or **▶ Run all 5**). Each spawns a synthetic agent that
+calls the SDK against this server. Two scenarios trigger seeded policies (auto-deny + quarantine);
+the rest pause for you to approve or deny on the **Live** tab. Hit **Reset demo** to wipe state
+and run again.
+
+### Wiring your own agent
+
 ```bash
 # install + build
 npm install
 npm run build
 
 # start control plane (port 4000)
-npm run start --workspace=@agentgate/control-plane
+npm run start
 
-# in another terminal, open the dashboard
+# open the dashboard
 open http://localhost:4000
 
-# in a third terminal, run the example agent
+# run the dangerous-agent example
 npm run example
 ```
 

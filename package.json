@@ -11,6 +11,7 @@
     "build": "npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "start": "npm run start --workspace=@agentgate/control-plane",
+    "demo": "npm run build --workspace=@agentgate/sdk && npm run build --workspace=@agentgate/control-plane && npm run start --workspace=@agentgate/control-plane",
     "example": "npm run start --workspace=@agentgate/example-dangerous-agent"
   },
   "devDependencies": {

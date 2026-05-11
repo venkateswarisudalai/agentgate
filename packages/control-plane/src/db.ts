@@ -95,6 +95,12 @@ function migrate(db: Database.Database): void {
   if (!hasColumn(db, "approvals", "session_id")) {
     db.exec(`ALTER TABLE approvals ADD COLUMN session_id TEXT`);
   }
+  // Index must be created AFTER the column exists. Pre-existing DBs created
+  // before session_id was introduced won't have the column at the time the
+  // initial schema block runs.
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_approvals_session ON approvals(session_id, created_at DESC)`,
+  );
   if (!hasColumn(db, "policies", "quarantine_minutes")) {
     db.exec(`ALTER TABLE policies ADD COLUMN quarantine_minutes INTEGER DEFAULT 60`);
   }
@@ -156,7 +162,8 @@ export function openDb(path: string): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_approvals_agent_action_time
       ON approvals(agent, action, created_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_approvals_session ON approvals(session_id, created_at DESC);
+    -- idx_approvals_session is created in migrate() after the session_id column
+    -- is guaranteed to exist (older DBs predate the column).
 
     CREATE TABLE IF NOT EXISTS audit_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
