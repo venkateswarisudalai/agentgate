@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>agentgate — Production safety for AI agents</title>
+  <meta name="description" content="agentgate is a control plane between AI agents and the dangerous things they can touch. Human approvals, policy engine, audit log. sudo for agents." />
+  <meta property="og:title" content="agentgate — sudo for agents" />
+  <meta property="og:description" content="Stop your agent from dropping prod. HITL approvals, policy engine, full audit log." />
+  <meta property="og:type" content="website" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="nav">
+    <div class="container nav-inner">
+      <a class="brand" href="#top">
+        <span class="brand-mark">⌘</span>
+        <span class="brand-name">agentgate</span>
+      </a>
+      <nav class="nav-links">
+        <a href="#problem">Problem</a>
+        <a href="#product">Product</a>
+        <a href="#how">How it works</a>
+        <a href="#who">Who it&rsquo;s for</a>
+        <a href="https://github.com/venkateswarisudalai/agentgate" target="_blank" rel="noopener">GitHub</a>
+        <a class="btn btn-primary btn-sm" href="#demo">Request a demo</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="top">
+    <!-- HERO -->
+    <section class="hero">
+      <div class="container hero-inner">
+        <div class="eyebrow">
+          <span class="dot"></span>
+          Production safety for AI agents
+        </div>
+        <h1>
+          Stop your agent from <span class="strike">dropping prod</span>.
+        </h1>
+        <p class="lede">
+          agentgate is a control plane that sits between your AI agents and the dangerous things they can touch &mdash; production databases, cloud infra, money, customer data. Risky actions pause for human approval. Everything is recorded.
+        </p>
+        <p class="sub-lede">It&rsquo;s <code>sudo</code> for agents.</p>
+        <div class="hero-cta">
+          <a class="btn btn-primary" href="#demo">Request a demo</a>
+          <a class="btn btn-ghost" href="#how">See how it works &rarr;</a>
+        </div>
+
+        <div class="hero-window" aria-hidden="true">
+          <div class="window-bar">
+            <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+            <span class="window-title">support-bot &mdash; pending approval</span>
+          </div>
+          <pre class="window-body"><code><span class="c-comment">// agent wants to issue a refund</span>
+<span class="c-key">await</span> gate.<span class="c-fn">requireApproval</span>({
+  action: <span class="c-str">"stripe.refund"</span>,
+  reason: <span class="c-str">"Customer asked for refund on #1234"</span>,
+  metadata: { amount: <span class="c-num">2500</span>, customer: <span class="c-str">"cus_abc"</span> },
+});
+
+<span class="c-comment">// → paused. waiting on a human.</span>
+<span class="c-comment">// → policy matched: amount &gt; $1000 requires approval</span>
+<span class="c-comment">// → approved by venka@unboundsec.ai in 14s</span>
+<span class="c-comment">// → logged. action proceeds.</span></code></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- PROBLEM -->
+    <section id="problem" class="section">
+      <div class="container">
+        <div class="section-head">
+          <span class="kicker">The problem</span>
+          <h2>AI agents have write access to production. Nothing watches them.</h2>
+        </div>
+        <div class="grid-3">
+          <div class="card">
+            <div class="card-num">01</div>
+            <h3>Prompts aren&rsquo;t controls</h3>
+            <p>Telling an agent &ldquo;don&rsquo;t drop the prod DB&rdquo; in a system prompt fails roughly 5% of the time. That 5% is an incident.</p>
+          </div>
+          <div class="card">
+            <div class="card-num">02</div>
+            <h3>IAM was built for humans</h3>
+            <p>RBAC, scoped tokens, and review queues assumed deterministic actors. Agents are non-deterministic, with derived intent and shifting credentials.</p>
+          </div>
+          <div class="card">
+            <div class="card-num">03</div>
+            <h3>You can&rsquo;t audit what you can&rsquo;t see</h3>
+            <p>When an agent does something it shouldn&rsquo;t, the trail is scattered across logs, prompts, and tool calls &mdash; if it exists at all.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PRODUCT -->
+    <section id="product" class="section section-alt">
+      <div class="container">
+        <div class="section-head">
+          <span class="kicker">What agentgate does</span>
+          <h2>One primitive. Three guarantees.</h2>
+          <p class="section-sub">Drop one call into your agent. Get human approvals, declarative policy, and an audit trail of every action it ever tried to take.</p>
+        </div>
+
+        <div class="features">
+          <div class="feature">
+            <div class="feature-icon">⏸</div>
+            <h3>Human-in-the-loop</h3>
+            <p>Risky actions pause and wait. Approve or deny from the dashboard, Slack, or CLI &mdash; with the agent&rsquo;s reasoning attached.</p>
+          </div>
+          <div class="feature">
+            <div class="feature-icon">⚖</div>
+            <h3>Policy engine</h3>
+            <p>Declarative rules for auto-allow, auto-deny, and quarantine. &ldquo;Refunds under $50 auto-pass. Anything touching the users table needs a human.&rdquo;</p>
+          </div>
+          <div class="feature">
+            <div class="feature-icon">▤</div>
+            <h3>Tamper-evident audit log</h3>
+            <p>Every approval, denial, and policy decision is recorded with full context. SOC2 and incident review without bolting on a separate logger.</p>
+          </div>
+          <div class="feature">
+            <div class="feature-icon">⚡</div>
+            <h3>MCP &amp; Claude Code hooks</h3>
+            <p>Wrap any MCP server. Hook into Claude Code shell and HTTP calls. Catch dangerous actions before the model even runs them.</p>
+          </div>
+          <div class="feature">
+            <div class="feature-icon">🛡</div>
+            <h3>Blast-radius scoring</h3>
+            <p>Pre-flight scanning for Terraform plans, kubectl commands, and package installs &mdash; flag the destructive ones before they execute.</p>
+          </div>
+          <div class="feature">
+            <div class="feature-icon">⌘</div>
+            <h3>Open source</h3>
+            <p>Apache 2.0. Self-host on your own infra, or use the hosted cloud. Your audit log stays where it should.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- HOW IT WORKS -->
+    <section id="how" class="section">
+      <div class="container">
+        <div class="section-head">
+          <span class="kicker">How it works</span>
+          <h2>Three lines of code. No new infrastructure.</h2>
+        </div>
+        <div class="how-grid">
+          <ol class="steps">
+            <li>
+              <span class="step-num">1</span>
+              <div>
+                <h4>Install the SDK</h4>
+                <p>Drop <code>@agentgate/sdk</code> into your agent. Point it at the control plane (self-hosted or cloud).</p>
+              </div>
+            </li>
+            <li>
+              <span class="step-num">2</span>
+              <div>
+                <h4>Wrap dangerous actions</h4>
+                <p>Before any destructive call &mdash; refund, delete, deploy &mdash; call <code>requireApproval()</code>. The agent pauses until a decision arrives.</p>
+              </div>
+            </li>
+            <li>
+              <span class="step-num">3</span>
+              <div>
+                <h4>Decide once, reuse forever</h4>
+                <p>Approve in the dashboard or Slack. Write a policy so it auto-decides next time. The audit log builds itself.</p>
+              </div>
+            </li>
+          </ol>
+
+          <div class="code-window">
+            <div class="window-bar">
+              <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+              <span class="window-title">agent.ts</span>
+            </div>
+            <pre class="window-body"><code><span class="c-key">import</span> { AgentGate } <span class="c-key">from</span> <span class="c-str">"@agentgate/sdk"</span>;
+
+<span class="c-key">const</span> gate = <span class="c-key">new</span> <span class="c-fn">AgentGate</span>({
+  baseUrl: <span class="c-str">"https://gate.acme.com"</span>,
+  agent: <span class="c-str">"support-bot"</span>,
+});
+
+<span class="c-key">const</span> decision = <span class="c-key">await</span> gate.<span class="c-fn">requireApproval</span>({
+  action: <span class="c-str">"db.delete"</span>,
+  reason: <span class="c-str">"Purging old test users"</span>,
+  metadata: { table: <span class="c-str">"users"</span>, rows: <span class="c-num">1_847</span> },
+});
+
+<span class="c-key">if</span> (decision.approved) <span class="c-fn">runIt</span>();
+<span class="c-key">else</span> <span class="c-fn">stop</span>(decision.reason);</code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- WHO IT'S FOR -->
+    <section id="who" class="section section-alt">
+      <div class="container">
+        <div class="section-head">
+          <span class="kicker">Who it&rsquo;s for</span>
+          <h2>Built for the team on the hook when the agent misfires.</h2>
+        </div>
+        <div class="grid-3">
+          <div class="persona">
+            <h3>Platform &amp; SRE</h3>
+            <p>You&rsquo;re the one paged when an agent runs <code>DROP TABLE</code>. agentgate gives you a chokepoint without rewriting every tool.</p>
+            <ul>
+              <li>Catch destructive ops before they hit prod</li>
+              <li>Score Terraform &amp; kubectl blast radius pre-apply</li>
+              <li>One audit log across every agent in the org</li>
+            </ul>
+          </div>
+          <div class="persona">
+            <h3>Founding engineers</h3>
+            <p>You shipped an agent that touches Stripe, the prod DB, and customer email. You can&rsquo;t sleep. Wrap it in a gate in an afternoon.</p>
+            <ul>
+              <li>Three-line SDK &mdash; no rearchitecting</li>
+              <li>Self-hosted in your own VPC</li>
+              <li>Approve from Slack on the go</li>
+            </ul>
+          </div>
+          <div class="persona">
+            <h3>Security &amp; GRC</h3>
+            <p>Your engineers shipped agents before you wrote the policy. agentgate gives you observability and review without slowing them down.</p>
+            <ul>
+              <li>Tamper-evident audit trail</li>
+              <li>Declarative policy as code</li>
+              <li>Maps cleanly to SOC2, ISO 27001 change-control</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- BENEFITS / VALUE -->
+    <section class="section">
+      <div class="container">
+        <div class="section-head">
+          <span class="kicker">Why teams adopt agentgate</span>
+          <h2>The cost of one prod-deletion incident is more than a year of agentgate.</h2>
+        </div>
+        <div class="grid-4">
+          <div class="value">
+            <div class="value-stat">~5%</div>
+            <p>Of agent tool-calls go off-script in production. That&rsquo;s how often you need a human in the loop.</p>
+          </div>
+          <div class="value">
+            <div class="value-stat">&lt; 1 day</div>
+            <p>To wrap a real agent. SDK is one function. Dashboard ships with it.</p>
+          </div>
+          <div class="value">
+            <div class="value-stat">100%</div>
+            <p>Of approval decisions logged with full agent context &mdash; reason, metadata, policy match, decider, latency.</p>
+          </div>
+          <div class="value">
+            <div class="value-stat">0</div>
+            <p>New vendors in your data path. Self-host the control plane in your own infra.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- REQUEST DEMO -->
+    <section id="demo" class="section section-cta">
+      <div class="container">
+        <div class="cta-grid">
+          <div class="cta-copy">
+            <span class="kicker">Request a demo</span>
+            <h2>See an agent get stopped mid-action.</h2>
+            <p>A 20-minute walkthrough: live demo of the dashboard, the policy engine, and a real agent that tries to delete a prod table. We&rsquo;ll cover self-hosting, integrations, and pricing.</p>
+            <ul class="cta-points">
+              <li>Live HITL approval flow on your own scenario</li>
+              <li>Policy engine + Slack integration tour</li>
+              <li>Self-host vs. cloud trade-offs for your stack</li>
+            </ul>
+          </div>
+
+          <form class="cta-form" id="demoForm" novalidate>
+            <div class="field">
+              <label for="name">Name</label>
+              <input id="name" name="name" type="text" autocomplete="name" required />
+            </div>
+            <div class="field">
+              <label for="email">Work email</label>
+              <input id="email" name="email" type="email" autocomplete="email" required />
+            </div>
+            <div class="field">
+              <label for="company">Company</label>
+              <input id="company" name="company" type="text" autocomplete="organization" />
+            </div>
+            <div class="field">
+              <label for="role">Role</label>
+              <select id="role" name="role">
+                <option value="">Select&hellip;</option>
+                <option>Platform / SRE</option>
+                <option>Founding / staff engineer</option>
+                <option>Security / GRC</option>
+                <option>Eng leadership</option>
+                <option>Other</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="usecase">What does your agent do today? (optional)</label>
+              <textarea id="usecase" name="usecase" rows="3" placeholder="e.g. support bot that issues refunds and updates Zendesk tickets"></textarea>
+            </div>
+            <button class="btn btn-primary btn-block" type="submit">Request a demo</button>
+            <p class="form-footnote">We&rsquo;ll reply within one business day. No drip campaign, no SDR sequence.</p>
+            <div class="form-success" id="formSuccess" hidden>
+              <strong>Thanks &mdash; got it.</strong>
+              <span>We&rsquo;ll be in touch at the email you provided.</span>
+            </div>
+          </form>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container footer-inner">
+      <div class="footer-brand">
+        <span class="brand-mark">⌘</span>
+        <span class="brand-name">agentgate</span>
+        <span class="footer-tag">&mdash; sudo for agents</span>
+      </div>
+      <div class="footer-links">
+        <a href="#product">Product</a>
+        <a href="#how">How it works</a>
+        <a href="#demo">Request a demo</a>
+        <a href="https://github.com/venkateswarisudalai/agentgate" target="_blank" rel="noopener">GitHub</a>
+      </div>
+      <div class="footer-meta">
+        <span>Apache 2.0</span>
+        <span>&copy; <span id="year"></span> agentgate</span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
