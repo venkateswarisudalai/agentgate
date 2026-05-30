@@ -102,6 +102,37 @@
       /* demo footer */
       .demo-footer { margin-top: 20px; padding: 14px 20px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; color: var(--muted); font-size: 13px; line-height: 1.6; }
       .demo-footer code { background: var(--panel-2); padding: 1px 6px; border-radius: 3px; color: var(--text); font-size: 12px; }
+
+      /* agents tab */
+      .agents-wrap { padding: 16px; max-width: 1400px; margin: 0 auto; }
+      .agents-summary { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+      .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 18px; min-width: 120px; }
+      .stat .num { font-size: 22px; font-weight: 700; }
+      .stat .lbl { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+      .stat.active .num { color: var(--accent); }
+      .stat.quar .num { color: var(--danger); }
+      .agents-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
+      .agent-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+      .agent-card.is-active { box-shadow: inset 3px 0 0 var(--accent); }
+      .agent-card.is-quar { box-shadow: inset 3px 0 0 var(--danger); }
+      .agent-card .head { display: flex; align-items: center; gap: 8px; }
+      .agent-card .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+      .agent-card.is-active .pulse { background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: pulse 1.8s ease-in-out infinite; }
+      .agent-card.is-quar .pulse { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+      @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+      .agent-card .name { font-weight: 600; font-size: 15px; color: var(--link); }
+      .agent-card .state { margin-left: auto; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.4px; }
+      .agent-card .state.active { background: rgba(124,243,160,0.15); color: var(--accent); }
+      .agent-card .state.quarantined { background: rgba(255,107,107,0.15); color: var(--danger); }
+      .agent-card .state.idle { background: var(--panel-2); color: var(--muted); }
+      .agent-card .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+      .agent-card .metric { text-align: center; background: var(--panel-2); border-radius: 6px; padding: 8px 4px; }
+      .agent-card .metric .v { font-size: 16px; font-weight: 700; }
+      .agent-card .metric .k { font-size: 10px; color: var(--muted); text-transform: uppercase; margin-top: 2px; }
+      .agent-card .metric.pending .v { color: var(--warn); }
+      .agent-card .metric.denied .v { color: var(--danger); }
+      .agent-card .foot { font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; }
+      .agent-card .quar-note { font-size: 12px; padding: 6px 8px; border-radius: 4px; background: rgba(255,107,107,0.07); border-left: 2px solid var(--danger); color: var(--text); }
     </style>
   </head>
   <body>
@@ -112,6 +143,7 @@
     </header>
     <nav class="tabs">
       <div class="tab" data-tab="live">Live</div>
+      <div class="tab" data-tab="agents">Agents</div>
       <div class="tab" data-tab="demo">Demo</div>
     </nav>
     <main id="view-live" class="view">
@@ -124,6 +156,12 @@
         <div class="audit" id="audit"></div>
       </section>
     </main>
+    <div id="view-agents" class="view">
+      <div class="agents-wrap">
+        <div class="agents-summary" id="agents-summary"></div>
+        <div class="agents-grid" id="agents-grid"></div>
+      </div>
+    </div>
     <div id="view-demo" class="view">
       <div class="demo-wrap">
         <div class="demo-intro">
@@ -246,6 +284,93 @@
         }).join("");
       }
 
+      function fmtAgo(ts) {
+        if (!ts) return "—";
+        const then = new Date(ts.endsWith("Z") ? ts : ts + "Z").getTime();
+        const s = Math.max(0, Math.round((Date.now() - then) / 1000));
+        if (s < 60) return s + "s ago";
+        if (s < 3600) return Math.floor(s / 60) + "m ago";
+        if (s < 86400) return Math.floor(s / 3600) + "h ago";
+        return Math.floor(s / 86400) + "d ago";
+      }
+
+      async function refreshAgents() {
+        const grid = document.getElementById("agents-grid");
+        if (!grid) return;
+        const [sessions, approvals] = await Promise.all([
+          getJSON("/v1/sessions?limit=200"),
+          getJSON("/v1/approvals?limit=200"),
+        ]);
+
+        // roll everything up per agent
+        const agents = {};
+        const get = (name) => (agents[name] ??= {
+          agent: name, active: 0, sessions: 0, lastSeen: null,
+          pending: 0, approved: 0, denied: 0, quarantined: false, quarantineReason: null,
+        });
+        for (const s of sessions) {
+          const a = get(s.agent);
+          a.sessions++;
+          if (s.status === "active") a.active++;
+          const ts = s.startedAt;
+          if (ts && (!a.lastSeen || ts > a.lastSeen)) a.lastSeen = ts;
+        }
+        for (const ap of approvals) {
+          const a = get(ap.agent);
+          if (ap.status in a) a[ap.status]++;
+          const ts = ap.createdAt;
+          if (ts && (!a.lastSeen || ts > a.lastSeen)) a.lastSeen = ts;
+        }
+
+        // quarantine state is per-agent — small roster, so fetch in parallel
+        await Promise.all(Object.keys(agents).map(async (name) => {
+          try {
+            const st = await getJSON(`/v1/agents/${encodeURIComponent(name)}`);
+            agents[name].quarantined = !!st.quarantined;
+            agents[name].quarantineReason = st.quarantineReason;
+          } catch { /* no state row = never quarantined */ }
+        }));
+
+        const list = Object.values(agents).sort((a, b) =>
+          (b.active - a.active) || String(b.lastSeen).localeCompare(String(a.lastSeen)));
+
+        const totalActive = list.reduce((n, a) => n + (a.active > 0 ? 1 : 0), 0);
+        const totalQuar = list.filter((a) => a.quarantined).length;
+        document.getElementById("agents-summary").innerHTML = `
+          <div class="stat"><div class="num">${list.length}</div><div class="lbl">Agents seen</div></div>
+          <div class="stat active"><div class="num">${totalActive}</div><div class="lbl">Running now</div></div>
+          <div class="stat quar"><div class="num">${totalQuar}</div><div class="lbl">Quarantined</div></div>
+          <div class="stat"><div class="num">${list.reduce((n, a) => n + a.pending, 0)}</div><div class="lbl">Awaiting approval</div></div>`;
+
+        if (!list.length) {
+          grid.innerHTML = '<div class="empty">No agents yet. Run a demo scenario or wire up the SDK.</div>';
+          return;
+        }
+        grid.innerHTML = list.map((a) => {
+          const state = a.quarantined ? "quarantined" : a.active > 0 ? "active" : "idle";
+          const cls = a.quarantined ? "is-quar" : a.active > 0 ? "is-active" : "";
+          return `
+            <div class="agent-card ${cls}">
+              <div class="head">
+                <span class="pulse"></span>
+                <span class="name">${escapeHtml(a.agent)}</span>
+                <span class="state ${state}">${state}</span>
+              </div>
+              ${a.quarantined ? `<div class="quar-note">⛔ Quarantined${a.quarantineReason ? " — " + escapeHtml(a.quarantineReason) : ""}</div>` : ""}
+              <div class="metrics">
+                <div class="metric"><div class="v">${a.active}</div><div class="k">Active</div></div>
+                <div class="metric pending"><div class="v">${a.pending}</div><div class="k">Pending</div></div>
+                <div class="metric"><div class="v">${a.approved}</div><div class="k">Approved</div></div>
+                <div class="metric denied"><div class="v">${a.denied}</div><div class="k">Denied</div></div>
+              </div>
+              <div class="foot">
+                <span>${a.sessions} session${a.sessions === 1 ? "" : "s"}</span>
+                <span>last seen ${fmtAgo(a.lastSeen)}</span>
+              </div>
+            </div>`;
+        }).join("");
+      }
+
       document.addEventListener("click", async (e) => {
         const btn = e.target.closest(".btn");
         if (!btn) return;
@@ -271,17 +396,19 @@
         const txt = document.getElementById("livetext");
         es.onopen = () => { dot.classList.add("on"); txt.textContent = "live"; };
         es.onerror = () => { dot.classList.remove("on"); txt.textContent = "reconnecting…"; };
-        es.onmessage = () => { refreshPending(); refreshAudit(); refreshScenarios(); };
+        es.onmessage = () => { refreshPending(); refreshAudit(); refreshScenarios(); refreshAgents(); };
       }
 
       // ----- tabs -----
       function setTab(name) {
         document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
         document.getElementById("view-live").classList.toggle("active", name === "live");
+        document.getElementById("view-agents").classList.toggle("active", name === "agents");
         document.getElementById("view-demo").classList.toggle("active", name === "demo");
+        if (name === "agents") refreshAgents();
         const url = new URL(window.location.href);
-        if (name === "demo") url.searchParams.set("tab", "demo");
-        else url.searchParams.delete("tab");
+        if (name === "live") url.searchParams.delete("tab");
+        else url.searchParams.set("tab", name);
         window.history.replaceState({}, "", url.toString());
       }
       document.querySelectorAll(".tab").forEach((t) => {
@@ -362,11 +489,13 @@
       });
 
       // ----- bootstrap -----
-      const initialTab = new URL(window.location.href).searchParams.get("tab") === "demo" ? "demo" : "live";
+      const tabParam = new URL(window.location.href).searchParams.get("tab");
+      const initialTab = ["demo", "agents"].includes(tabParam) ? tabParam : "live";
       setTab(initialTab);
       refreshPending();
       refreshAudit();
       refreshScenarios();
+      refreshAgents();
       connectSSE();
     </script>
   </body>

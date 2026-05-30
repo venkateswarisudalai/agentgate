@@ -1,66 +1,74 @@
 # agentgate
 
-> Production safety for AI agents. Stop your agent from dropping prod.
+> The governance gateway for AI agents. Every tool call your agents make in production flows through one control plane — policy, approval, audit, kill-switch — with **zero changes to agent code.**
 
-`agentgate` is a control plane that sits between AI agents and the dangerous things they can touch — production databases, cloud infra, money, customer data. Risky actions pause and wait for human approval. Every action is recorded in an audit log.
-
-It's `sudo` for agents.
+Think of it as a **firewall for MCP**: agents speak the Model Context Protocol to reach databases, cloud infra, payment APIs, and customer data. `agentgate` sits in front of those tool calls, classifies risk, enforces policy, and records everything.
 
 ## Why
 
-In 2026, AI agents are routinely given write access to production systems: coding agents push to repos, support agents issue refunds, ops agents run shell commands. Telling an agent "don't do X" in a prompt fails ~5% of the time, and that 5% is an incident.
+In 2026, AI agents routinely get write access to production: coding agents push to repos, support agents issue refunds, ops agents run shell commands. Telling an agent "don't do X" in a prompt fails ~5% of the time, and that 5% is an incident.
 
-The existing IAM, RBAC, and approval tooling assumed the actor was a human or a stable service. Agents are non-deterministic actors with derived intent and shifting credentials. They need their own control layer.
+IAM, RBAC, and approval tooling assumed the actor was a human or a stable service. Agents are non-deterministic actors with derived intent and shifting credentials. They need their own control layer — one that sits at the point where intent becomes action: **the tool call.**
 
-## What's in v0
+## The gateway (start here — no agent code)
 
-- `@agentgate/sdk` — TypeScript SDK with one primitive: `requireApproval()`.
-- `@agentgate/control-plane` — Fastify + SQLite server. REST API, server-sent events, audit log.
-- Dashboard — single-page web UI for approving/denying actions in real time.
-- Example — a "dangerous agent" that demonstrates the full loop.
+`@agentgate/mcp-gate` transparently wraps any MCP server over stdio. Your MCP client (Claude Desktop, Cursor, Cline, …) connects to the gate instead of the server; the gate forwards everything except `tools/call`, which it intercepts → classifies risk → enforces policy / requests approval → forwards or blocks.
 
-## Quickstart
+```
+MCP client  <--stdio-->  mcp-gate  <--stdio-->  any MCP server
+                            │
+                            └── policy · approval · audit · kill-switch
+```
 
-The fastest way to feel the product is the built-in demo — no agent code required:
+Wrap any server in one line:
+
+```bash
+agentgate-mcp-gate --agent stripe-bot -- npx -y @stripe/mcp
+```
+
+### See it in 60 seconds
 
 ```bash
 npm install
-npm run demo                   # builds + starts control plane on :4000
-open http://localhost:4000?tab=demo
+npm run demo            # terminal 1: control plane + dashboard on :4000
+npm run demo:mcp        # terminal 2: drive an MCP client through the gate
 ```
 
-Click any of the 5 scenarios (or **▶ Run all 5**). Each spawns a synthetic agent that
-calls the SDK against this server. Two scenarios trigger seeded policies (auto-deny + quarantine);
-the rest pause for you to approve or deny on the **Live** tab. Hit **Reset demo** to wipe state
-and run again.
+The demo makes two tool calls from the **same unmodified client**:
 
-### Wiring your own agent
+- `list_users()` — read-only → **waved through**, no approval.
+- `drop_table({ table: "users" })` — destructive → **frozen** until you approve at
+  [http://localhost:4000/?tab=agents](http://localhost:4000/?tab=agents).
 
-```bash
-# install + build
-npm install
-npm run build
+Approve it and watch the call complete. Every action — allowed, denied, or pending — lands in the audit log.
 
-# start control plane (port 4000)
-npm run start
+## What's in the box
 
-# open the dashboard
-open http://localhost:4000
+| Package | What it does |
+| --- | --- |
+| `@agentgate/mcp-gate` | **The gateway.** Wraps any MCP server; routes tool calls through the control plane. Zero agent code. |
+| `@agentgate/claude-code-hook` | PreToolUse hook that gates dangerous Claude Code tool calls through agentgate. |
+| `@agentgate/control-plane` | Fastify + SQLite server: REST API, server-sent events, policy engine, audit log, dashboard. |
+| `@agentgate/sdk` | TypeScript SDK with one primitive — `requireApproval()` — for gating custom actions in your own code. |
+| `@agentgate/cli` | Approve / deny agent actions from the terminal. |
 
-# run the dangerous-agent example
-npm run example
-```
+## Dashboard
 
-The agent will pause. Approve it in the dashboard and watch it proceed.
+A single-page UI on the control plane:
 
-## SDK usage
+- **Live** — pending approvals + a real-time audit log.
+- **Agents** — every agent seen, who's running now, who's quarantined, and per-agent approval counts. The cockpit you open first.
+- **Demo** — five one-click scenarios that spawn synthetic agents trying risky things.
+
+## The SDK (custom, in-code gating)
+
+When you control the agent's code and want to gate a *non-MCP* action (a Stripe refund, a raw SQL statement), call the SDK directly:
 
 ```ts
 import { AgentGate } from "@agentgate/sdk";
 
 const gate = new AgentGate({ baseUrl: "http://localhost:4000", agent: "support-bot" });
 
-// before any destructive action:
 const decision = await gate.requireApproval({
   action: "stripe.refund",
   reason: "Customer requested refund for order #1234",
@@ -74,10 +82,16 @@ if (decision.approved) {
 }
 ```
 
+The gateway and the SDK share one control plane, one policy engine, one audit log.
+
+## Policy
+
+Rules in the control plane evaluate every gated action and can **allow**, **deny**, **require approval**, or **quarantine** the agent — by agent pattern, action pattern, and condition. Two of the demo scenarios trip seeded policies so you can watch enforcement happen with no human in the loop.
+
 ## Roadmap
 
-See [PLAN.md](./PLAN.md) for the 8-week roadmap and product direction.
+See [PLAN.md](./PLAN.md) for the roadmap and product direction.
 
 ## License
 
-Apache 2.0 (planned for week 6 OSS release).
+Apache 2.0 — see [LICENSE](./LICENSE).
