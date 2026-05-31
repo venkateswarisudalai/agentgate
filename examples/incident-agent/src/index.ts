@@ -1,7 +1,7 @@
 /**
  * incident-agent — an AI DevOps engineer, gated by agentgate.
  *
- * The loop a real SRE runs, automated:
+ * The loop a real SRE runs, automated and made safe:
  *   WATCH logs  →  DETECT a fault  →  DIAGNOSE root cause  →
  *   PROPOSE a remediation  →  ASK a human (agentgate)  →  ACT  →  audit
  *
@@ -10,12 +10,14 @@
  * deploy, proposes a rollback, and routes that rollback through the agentgate
  * control plane for human approval before it touches anything.
  *
- * The detection + diagnosis here are deterministic so the demo always works;
- * `diagnose()` is the seam where a real LLM call (Claude) would slot in.
+ * Diagnosis is real when ANTHROPIC_API_KEY is set (Claude reasons over the logs
+ * + deploy history); otherwise it falls back to a deterministic heuristic so the
+ * demo always runs. See diagnose.ts.
  *
  * Run the control plane first (`npm run demo`), then `npm run demo:incident`.
  */
 import { AgentGate, ApprovalTimeoutError } from "@agentgate/sdk";
+import { diagnose, type IncidentInput } from "./diagnose.js";
 
 const GATE_URL = process.env.AGENTGATE_URL ?? "http://localhost:4000";
 const SERVICE = "orders-api";
@@ -34,18 +36,19 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const rule = () => console.log(c.dim("─".repeat(66)));
 const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
 
+const BASELINE = 0.01;
+
 // ----- synthetic service: a log stream with a bad deploy partway through -----
 type ReqLog = { t: number; status: number; route: string };
 
 class OrdersApi {
   version = "v42";
-  errorRate = 0.01; // healthy baseline
+  errorRate = BASELINE;
   private n = 0;
   deployedAt: number | null = null;
 
   tick(now: number): ReqLog {
     this.n++;
-    // A bad deploy lands at request ~45 and pushes the 5xx rate way up.
     if (this.n === 45) {
       this.version = "v43";
       this.deployedAt = now;
@@ -60,7 +63,7 @@ class OrdersApi {
 
   rollback(): void {
     this.version = "v42";
-    this.errorRate = 0.01;
+    this.errorRate = BASELINE;
   }
 }
 
@@ -84,32 +87,6 @@ class Detector {
   }
 }
 
-type Diagnosis = {
-  headline: string;
-  rootCause: string;
-  remediation: string;
-  fromVersion: string;
-  toVersion: string;
-  confidence: "high" | "medium" | "low";
-};
-
-// The "AI" step. Deterministic here; swap for an LLM over the log buffer + deploy
-// history to make it genuinely reason. The shape it returns stays the same.
-function diagnose(svc: OrdersApi, rate: number, now: number): Diagnosis {
-  const sinceDeploy = svc.deployedAt ? Math.round((now - svc.deployedAt) / 1000) : null;
-  const deployCorrelated = sinceDeploy !== null && sinceDeploy < 120;
-  return {
-    headline: `${SERVICE} 5xx rate at ${pct(rate)} (baseline ~1%)`,
-    rootCause: deployCorrelated
-      ? `error spike began ~${sinceDeploy}s after deploy ${svc.version} — almost certainly a bad deploy`
-      : `error spike with no recent deploy — needs deeper investigation`,
-    remediation: `roll back ${SERVICE} ${svc.version} → v42`,
-    fromVersion: svc.version,
-    toVersion: "v42",
-    confidence: deployCorrelated ? "high" : "low",
-  };
-}
-
 async function main() {
   // preflight
   try {
@@ -121,22 +98,27 @@ async function main() {
     process.exit(1);
   }
 
+  const brain = process.env.ANTHROPIC_API_KEY ? "Claude-powered" : "heuristic (set ANTHROPIC_API_KEY for Claude)";
   console.log(c.bold(`\n  🤖 incident-agent — an AI DevOps engineer (gated by agentgate)`));
-  console.log(c.dim(`  Watching ${SERVICE} logs. Read-only — it won't touch anything without asking.\n`));
+  console.log(c.dim(`  Watching ${SERVICE} logs. Read-only — it won't touch anything without asking.`));
+  console.log(c.dim(`  Diagnosis: ${brain}\n`));
   rule();
 
   const svc = new OrdersApi();
   const det = new Detector();
   const gate = new AgentGate({ baseUrl: GATE_URL, agent: AGENT, pollIntervalMs: 750, defaultTimeoutMs: 300000 });
 
+  const logBuffer: string[] = [];
   let lastPrinted = -1;
+
   // WATCH + DETECT
   for (let i = 0; i < 200; i++) {
     const now = Date.now();
     const log = svc.tick(now);
     det.observe(log.status);
+    logBuffer.push(`${SERVICE} ${svc.version} ${log.route} -> ${log.status}`);
+    if (logBuffer.length > 60) logBuffer.shift();
 
-    // surface a periodic health line (and every error once the spike starts)
     if (i % 10 === 0 || (log.status >= 500 && det.rate > 0.1)) {
       const r = det.rate;
       const color = r >= 0.15 ? c.red : r >= 0.05 ? c.yellow : c.green;
@@ -148,7 +130,7 @@ async function main() {
 
     if (det.firing()) {
       console.log("");
-      console.log(`  ${c.red("⚠ ANOMALY")}  ${SERVICE} 5xx rate ${c.bold(pct(det.rate))} over last ${25} requests`);
+      console.log(`  ${c.red("⚠ ANOMALY")}  ${SERVICE} 5xx rate ${c.bold(pct(det.rate))} over last 25 requests`);
       break;
     }
     await wait(90);
@@ -156,13 +138,25 @@ async function main() {
 
   // DIAGNOSE
   rule();
-  const dx = diagnose(svc, det.rate, Date.now());
-  console.log(`  ${c.cyan("🔎 diagnosis")}  ${dx.rootCause}`);
-  console.log(`  ${c.cyan("🛠 proposed")}   ${c.bold(dx.remediation)} ${c.dim(`(confidence: ${dx.confidence})`)}`);
+  const input: IncidentInput = {
+    service: SERVICE,
+    currentVersion: svc.version,
+    errorRate: det.rate,
+    baselineRate: BASELINE,
+    deployVersion: svc.version,
+    secondsSinceDeploy: svc.deployedAt ? Math.round((Date.now() - svc.deployedAt) / 1000) : null,
+    recentLogs: logBuffer,
+  };
+  console.log(c.dim(`  🤔 diagnosing…`));
+  const dx = await diagnose(input);
+  const via = dx.source === "claude" ? c.dim("(via Claude)") : c.dim("(heuristic)");
+  console.log(`  ${c.cyan("🔎 root cause")}  ${dx.rootCause} ${via}`);
+  console.log(`  ${c.cyan("🛠 remediation")} ${c.bold(dx.remediation)} ${c.dim(`· confidence ${dx.confidence}`)}`);
+  console.log(`  ${c.cyan("↩ rollback")}    ${dx.rollbackPlan}`);
   console.log("");
 
   // ASK — route the risky action through agentgate
-  console.log(`  ${c.yellow("⏸ requesting approval")} — the agent will NOT roll back until a human says so.`);
+  console.log(`  ${c.yellow("⏸ requesting approval")} — the agent will NOT act until a human says so.`);
   console.log(`    Approve or deny at ${c.bold(`${GATE_URL}/?tab=agents`)} ${c.dim("(or the Live tab)")}`);
 
   let approved = false;
@@ -171,24 +165,25 @@ async function main() {
   try {
     const decision = await gate.requireApproval({
       action: "k8s.rollback",
-      reason: `${dx.headline} — ${dx.remediation}`,
+      reason: `${SERVICE} 5xx at ${pct(det.rate)} — ${dx.remediation}`,
       metadata: {
         ruleId: "incident-rollback",
         category: "incident-response",
         severity: "high",
         impact: {
-          headline: dx.headline,
+          headline: `${SERVICE} 5xx at ${pct(det.rate)} (baseline ~${pct(BASELINE)})`,
           consequences: [
             `Root cause: ${dx.rootCause}`,
             `Remediation: ${dx.remediation}`,
-            `Blast radius: all ${SERVICE} traffic during the rollout`,
+            `Rollback plan: ${dx.rollbackPlan}`,
+            `Confidence: ${dx.confidence} · diagnosis via ${dx.source}`,
           ],
           recoverable: "yes",
-          targets: { service: SERVICE, from: dx.fromVersion, to: dx.toVersion },
+          targets: { service: SERVICE, version: svc.version },
         },
         tool: "kubectl",
-        toolInput: { command: `kubectl rollout undo deploy/${SERVICE}  # ${dx.fromVersion} → ${dx.toVersion}` },
-        action: `rollback ${SERVICE} ${dx.fromVersion}→${dx.toVersion}`,
+        toolInput: { command: `kubectl rollout undo deploy/${SERVICE}` },
+        action: `rollback ${SERVICE} ${svc.version}→v42`,
       },
     });
     approved = decision.approved;
@@ -219,7 +214,6 @@ async function main() {
   svc.rollback();
   console.log(c.green("  done"));
 
-  // confirm recovery from the logs
   console.log(c.dim("  verifying recovery from logs…"));
   for (let k = 0; k < 4; k++) {
     const det2 = new Detector(25, 0.15);
