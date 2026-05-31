@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
 import { fileURLToPath } from "node:url";
@@ -11,7 +12,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const PORT = parseInt(process.env.PORT ?? "4000", 10);
 const HOST = process.env.HOST ?? "0.0.0.0";
-const DB_PATH = process.env.AGENTGATE_DB ?? resolve(__dirname, "../data/agentgate.db");
+// Default the DB to the caller's working directory so `npx @agentgate/control-plane`
+// works from anywhere (writing inside an npx/global node_modules dir is read-only or
+// ephemeral). Override with AGENTGATE_DB.
+const DB_PATH = process.env.AGENTGATE_DB ?? resolve(process.cwd(), "agentgate.db");
 const PUBLIC_DIR = resolve(__dirname, "../public");
 const PUBLIC_BASE_URL =
   process.env.AGENTGATE_PUBLIC_URL ?? `http://127.0.0.1:${PORT}`;

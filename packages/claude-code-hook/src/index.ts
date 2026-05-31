@@ -152,6 +152,15 @@ async function handleInstallIntent(
 }
 
 async function main() {
+  // Subcommand: `init` installs the hook into Claude Code's settings.json.
+  // Claude Code invokes this binary with no args and pipes JSON on stdin, so a
+  // bare invocation falls through to the hook path below.
+  const sub = process.argv[2];
+  if (sub === "init") {
+    const { runInit } = await import("./init.js");
+    runInit(process.argv.slice(3)); // never returns
+  }
+
   const raw = await readStdin();
   let payload: HookInput = {};
   try {

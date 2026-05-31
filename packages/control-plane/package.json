@@ -4,14 +4,25 @@
   "description": "agentgate control plane — REST API, audit log, dashboard host",
   "main": "dist/index.js",
   "type": "module",
+  "bin": {
+    "agentgate-control-plane": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "public"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "dev": "tsc -p tsconfig.json && node dist/index.js",
-    "test": "node --import tsx --test test/*.test.ts"
+    "test": "node --import tsx --test test/*.test.ts",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@agentgate/sdk": "*",
+    "@agentgate/sdk": "^0.0.1",
     "@fastify/static": "^8.0.3",
     "better-sqlite3": "^11.5.0",
     "fastify": "^5.1.0"

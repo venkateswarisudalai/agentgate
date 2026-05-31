@@ -82,6 +82,21 @@ That's it. Your agent now runs exactly as before — but every destructive `tool
 pauses in the dashboard until you approve it, and everything is audited. Tune what
 gets gated with `--allow`, `--deny`, or `--gate-all`.
 
+## Gate Claude Code in one command
+
+To gate a *real* coding agent — one that actually runs `rm -rf`, force-pushes, edits
+`.env`, drops tables — install the PreToolUse hook. No JSON editing:
+
+```bash
+npx @agentgate/control-plane          # dashboard on :4000 (leave running)
+npx @agentgate/claude-code-hook init  # merges the hook into ~/.claude/settings.json
+```
+
+Restart Claude Code. Now when it tries something destructive, the call **freezes**
+before it runs and waits for you to approve in the dashboard. Reads and safe edits
+pass through untouched. (`init --project` writes a project-local config; `init --local`
+points at a source checkout for pre-publish testing.)
+
 ## What's in the box
 
 | Package | What it does |

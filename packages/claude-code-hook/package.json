@@ -7,13 +7,20 @@
   "bin": {
     "agentgate-claude-code-hook": "dist/index.js"
   },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node --import tsx --test test/*.test.ts"
+    "test": "node --import tsx --test test/*.test.ts",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@agentgate/sdk": "*",
-    "@agentgate/pkg-scan": "*"
+    "@agentgate/sdk": "^0.0.1",
+    "@agentgate/pkg-scan": "^0.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.9.0"
