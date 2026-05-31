@@ -42,6 +42,46 @@ The demo makes two tool calls from the **same unmodified client**:
 
 Approve it and watch the call complete. Every action — allowed, denied, or pending — lands in the audit log.
 
+## Wrap your own server in 5 minutes (zero code)
+
+You don't change your agent. You change one line of MCP **config** — point your client at the gate instead of the server, and let the gate spawn the server.
+
+**1. Start the control plane** (this is the dashboard you'll approve from):
+
+```bash
+npx @agentgate/control-plane     # dashboard on http://localhost:4000
+```
+
+**2. Wrap a server from the command line** to try it immediately:
+
+```bash
+# before: npx -y @stripe/mcp
+# after:  the same server, now gated
+npx @agentgate/mcp-gate --agent stripe-bot -- npx -y @stripe/mcp
+```
+
+**3. Or wire it into your MCP client** (Claude Desktop / Cursor / Cline). In your
+`mcpServers` config, wrap the server command with the gate:
+
+```jsonc
+{
+  "mcpServers": {
+    "stripe": {
+      "command": "npx",
+      "args": [
+        "@agentgate/mcp-gate", "--agent", "stripe-bot",
+        "--",                       // everything after this is your real server
+        "npx", "-y", "@stripe/mcp"
+      ]
+    }
+  }
+}
+```
+
+That's it. Your agent now runs exactly as before — but every destructive `tools/call`
+pauses in the dashboard until you approve it, and everything is audited. Tune what
+gets gated with `--allow`, `--deny`, or `--gate-all`.
+
 ## What's in the box
 
 | Package | What it does |
