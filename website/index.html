@@ -1,346 +1,445 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>agentgate — Production safety for AI agents</title>
-  <meta name="description" content="agentgate is a control plane between AI agents and the dangerous things they can touch. Human approvals, policy engine, audit log. sudo for agents." />
-  <meta property="og:title" content="agentgate — sudo for agents" />
-  <meta property="og:description" content="Stop your agent from dropping prod. HITL approvals, policy engine, full audit log." />
-  <meta property="og:type" content="website" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css" />
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>agentgate — a firewall for what your AI agents do in production</title>
+<meta name="description" content="agentgate is a governance gateway for AI agents. Every tool call your agents make in production flows through one control plane — policy, approval, audit, kill-switch — with zero changes to agent code." />
+<style>
+  :root {
+    --bg: #08090b;
+    --bg-2: #0d0f13;
+    --panel: #111317;
+    --panel-2: #161a20;
+    --border: #20242c;
+    --border-2: #2b313b;
+    --text: #e7ebf0;
+    --muted: #8b94a3;
+    --faint: #5b6470;
+    --accent: #7cf3a0;
+    --danger: #ff6b6b;
+    --warn: #ffd166;
+    --link: #8fb6ff;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--sans); font-size: 16px; line-height: 1.6;
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; overflow-x: hidden;
+  }
+  a { color: inherit; text-decoration: none; }
+  .container { width: 100%; max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+  .mono { font-family: var(--mono); }
+
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background:
+      radial-gradient(60% 50% at 50% -10%, rgba(124,243,160,0.10), transparent 70%),
+      radial-gradient(40% 40% at 85% 10%, rgba(143,182,255,0.06), transparent 70%);
+  }
+  main, header, footer { position: relative; z-index: 1; }
+
+  .nav { position: sticky; top: 0; z-index: 50; backdrop-filter: blur(10px);
+    background: rgba(8,9,11,0.7); border-bottom: 1px solid var(--border); }
+  .nav-inner { display: flex; align-items: center; gap: 20px; height: 60px; }
+  .brand { display: flex; align-items: center; gap: 9px; font-weight: 650; letter-spacing: -0.01em; }
+  .brand-mark { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center;
+    background: linear-gradient(140deg, var(--accent), #4fd483); color: #062012; font-size: 14px; font-weight: 800; }
+  .nav-links { margin-left: auto; display: flex; align-items: center; gap: 26px; }
+  .nav-links a { color: var(--muted); font-size: 14px; transition: color .15s; }
+  .nav-links a:hover { color: var(--text); }
+  .btn { display: inline-flex; align-items: center; gap: 8px; border-radius: 8px;
+    padding: 10px 16px; font-size: 14px; font-weight: 600; cursor: pointer;
+    border: 1px solid var(--border-2); background: transparent; color: var(--text);
+    transition: transform .12s ease, background .15s, border-color .15s; white-space: nowrap; }
+  .btn:hover { transform: translateY(-1px); }
+  .btn-primary { background: var(--accent); color: #06210d; border-color: var(--accent); }
+  .btn-primary:hover { background: #93f7b1; }
+  .btn-ghost:hover { border-color: var(--border-2); background: var(--panel); }
+  .btn-sm { padding: 7px 13px; font-size: 13px; }
+
+  .hero { padding: 78px 0 56px; }
+  .hero-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 52px; align-items: center; }
+  @media (max-width: 880px) { .hero-grid { grid-template-columns: 1fr; gap: 36px; } }
+  .eyebrow { display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono);
+    font-size: 12.5px; color: var(--accent); border: 1px solid rgba(124,243,160,0.25);
+    background: rgba(124,243,160,0.06); padding: 5px 11px; border-radius: 999px; margin-bottom: 22px; }
+  .eyebrow .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+    box-shadow: 0 0 8px var(--accent); animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+  h1 { font-size: clamp(34px, 5vw, 52px); line-height: 1.05; letter-spacing: -0.025em; margin: 0 0 20px; font-weight: 720; }
+  h1 .grad { background: linear-gradient(120deg, var(--accent), #aef7c6 60%, var(--link));
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .lede { font-size: 18.5px; color: var(--muted); margin: 0 0 14px; max-width: 30ch; }
+  .sub-lede { font-size: 15px; color: var(--faint); margin: 0 0 28px; }
+  .sub-lede code { font-family: var(--mono); color: var(--text); background: var(--panel); padding: 1px 7px; border-radius: 5px; font-size: 13px; }
+  .hero-cta { display: flex; gap: 12px; flex-wrap: wrap; }
+  .install { margin-top: 26px; display: flex; align-items: center; gap: 10px; font-family: var(--mono);
+    font-size: 13.5px; color: var(--muted); background: var(--panel); border: 1px solid var(--border);
+    border-radius: 9px; padding: 11px 14px; max-width: 380px; }
+  .install .pmt { color: var(--accent); }
+  .install .copy { margin-left: auto; color: var(--faint); cursor: pointer; font-family: var(--sans);
+    font-size: 12px; border: 1px solid var(--border); border-radius: 6px; padding: 3px 9px; transition: all .15s; }
+  .install .copy:hover { color: var(--text); border-color: var(--border-2); }
+
+  .term { background: var(--panel); border: 1px solid var(--border-2); border-radius: 12px;
+    box-shadow: 0 30px 80px -30px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.02) inset; overflow: hidden; }
+  .term-bar { display: flex; align-items: center; gap: 8px; padding: 11px 14px; background: var(--panel-2); border-bottom: 1px solid var(--border); }
+  .tl { width: 11px; height: 11px; border-radius: 50%; }
+  .tl.r { background: #ff5f57 } .tl.y { background: #febc2e } .tl.g { background: #28c840 }
+  .term-title { margin-left: 8px; font-family: var(--mono); font-size: 12px; color: var(--faint); }
+  .term-live { margin-left: auto; display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; color: var(--accent); }
+  .term-live .pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+  .term-body { font-family: var(--mono); font-size: 13px; line-height: 1.7; padding: 16px 16px 6px; min-height: 232px; max-height: 232px; overflow: hidden; }
+  .ln { white-space: pre-wrap; word-break: break-word; }
+  .c-prompt { color: var(--accent); } .c-dim { color: var(--faint); }
+  .c-ok { color: var(--accent); } .c-warn { color: var(--warn); } .c-bad { color: var(--danger); }
+  .c-tool { color: var(--link); } .c-cmd { color: var(--text); }
+  .cursor { display: inline-block; width: 8px; height: 15px; background: var(--accent); vertical-align: -2px; animation: blink 1.05s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0 } }
+  .term-ctl { border-top: 1px solid var(--border); background: var(--panel-2); padding: 12px 14px; }
+  .term-ctl .label { font-family: var(--mono); font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 9px; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip { font-family: var(--mono); font-size: 12.5px; cursor: pointer; user-select: none;
+    border: 1px solid var(--border-2); background: var(--panel); color: var(--text); padding: 7px 11px;
+    border-radius: 7px; transition: all .14s; display: inline-flex; align-items: center; gap: 7px; }
+  .chip:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .chip[data-kind="danger"]:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
+  .chip:disabled { opacity: .4; cursor: default; }
+  .chip .tag { font-size: 10px; padding: 1px 6px; border-radius: 999px; background: var(--bg-2); color: var(--faint); }
+  .decide { display: flex; gap: 8px; margin-top: 10px; }
+  .decide .btn { padding: 8px 16px; }
+  .b-approve { background: var(--accent); color: #06210d; border-color: var(--accent); }
+  .b-deny { background: transparent; color: var(--danger); border-color: rgba(255,107,107,0.45); }
+  .b-deny:hover { background: rgba(255,107,107,0.1); }
+  .hidden { display: none !important; }
+
+  section.sec { padding: 76px 0; border-top: 1px solid var(--border); }
+  .kicker { font-family: var(--mono); font-size: 12.5px; color: var(--accent); text-transform: uppercase; letter-spacing: .1em; }
+  .sec h2 { font-size: clamp(26px, 3.4vw, 34px); letter-spacing: -0.02em; margin: 12px 0 0; font-weight: 680; }
+  .sec .sub { color: var(--muted); font-size: 17px; margin-top: 12px; max-width: 60ch; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 40px; }
+  @media (max-width: 800px) { .grid-3 { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 22px; transition: border-color .15s, transform .15s; }
+  .card:hover { border-color: var(--border-2); transform: translateY(-2px); }
+  .card .ic { font-size: 20px; }
+  .card h3 { margin: 14px 0 8px; font-size: 17px; letter-spacing: -0.01em; }
+  .card p { margin: 0; color: var(--muted); font-size: 14.5px; }
+
+  .flow { margin-top: 40px; display: flex; align-items: stretch; gap: 0; flex-wrap: wrap;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 8px; }
+  .flow .node { flex: 1 1 150px; padding: 18px 16px; text-align: center; }
+  .flow .node .t { font-family: var(--mono); font-size: 13px; color: var(--text); }
+  .flow .node .d { font-size: 12.5px; color: var(--faint); margin-top: 4px; }
+  .flow .arrow { display: grid; place-items: center; color: var(--faint); padding: 0 4px; }
+  .flow .gate { background: rgba(124,243,160,0.06); border: 1px solid rgba(124,243,160,0.25); border-radius: 9px; }
+  .flow .gate .t { color: var(--accent); }
+  @media (max-width: 720px) { .flow { flex-direction: column; } .flow .arrow { transform: rotate(90deg); padding: 4px 0; } }
+
+  .ship { margin-top: 36px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .ship .row { display: flex; align-items: center; gap: 14px; padding: 16px 18px; border-bottom: 1px solid var(--border); font-family: var(--mono); font-size: 14px; }
+  .ship .row:last-child { border-bottom: 0; }
+  .ship .n { width: 24px; height: 24px; flex: none; border-radius: 50%; display: grid; place-items: center;
+    background: var(--bg-2); border: 1px solid var(--border-2); color: var(--accent); font-size: 12px; }
+  .ship code { color: var(--text); }
+  .ship .cmt { color: var(--faint); margin-left: auto; font-size: 12.5px; }
+  @media (max-width: 640px){ .ship .cmt { display:none } }
+
+  /* lead capture */
+  .access { text-align: center; }
+  .access h2 { max-width: 20ch; margin-inline: auto; }
+  .capture { margin: 30px auto 0; max-width: 480px; display: flex; gap: 10px; }
+  .capture input { flex: 1; background: var(--panel); border: 1px solid var(--border-2); color: var(--text);
+    border-radius: 9px; padding: 13px 15px; font-size: 15px; font-family: var(--sans); outline: none; transition: border-color .15s; }
+  .capture input:focus { border-color: var(--accent); }
+  .capture .btn { padding: 13px 20px; }
+  .capture-note { color: var(--faint); font-size: 13px; margin-top: 14px; }
+  .capture-ok { color: var(--accent); font-size: 15px; margin-top: 18px; font-family: var(--mono); }
+  @media (max-width: 520px){ .capture { flex-direction: column; } }
+
+  footer { border-top: 1px solid var(--border); padding: 36px 0; color: var(--faint); font-size: 13.5px; }
+  .foot-inner { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .foot-inner .sp { margin-left: auto; }
+  footer a:hover { color: var(--text); }
+</style>
 </head>
 <body>
-  <header class="nav">
-    <div class="container nav-inner">
-      <a class="brand" href="#top">
-        <span class="brand-mark">⌘</span>
-        <span class="brand-name">agentgate</span>
-      </a>
-      <nav class="nav-links">
-        <a href="#problem">Problem</a>
-        <a href="#product">Product</a>
-        <a href="#how">How it works</a>
-        <a href="#who">Who it&rsquo;s for</a>
-        <a href="https://github.com/venkateswarisudalai/agentgate" target="_blank" rel="noopener">GitHub</a>
-        <a class="btn btn-primary btn-sm" href="#demo">Request a demo</a>
-      </nav>
-    </div>
-  </header>
+<header class="nav">
+  <div class="container nav-inner">
+    <a class="brand" href="#top"><span class="brand-mark">⌘</span><span>agentgate</span></a>
+    <nav class="nav-links">
+      <a href="#how">How it works</a>
+      <a href="#ship">Install</a>
+      <a href="#pieces">What's inside</a>
+      <a href="https://github.com/venkateswarisudalai/agentgate" target="_blank" rel="noopener">GitHub ↗</a>
+      <a class="btn btn-primary btn-sm" href="#access">Get early access</a>
+    </nav>
+  </div>
+</header>
 
-  <main id="top">
-    <!-- HERO -->
-    <section class="hero">
-      <div class="container hero-inner">
-        <div class="eyebrow">
-          <span class="dot"></span>
-          Production safety for AI agents
-        </div>
-        <h1>
-          Stop your agent from <span class="strike">dropping prod</span>.
-        </h1>
-        <p class="lede">
-          agentgate is a control plane that sits between your AI agents and the dangerous things they can touch &mdash; production databases, cloud infra, money, customer data. Risky actions pause for human approval. Everything is recorded.
-        </p>
-        <p class="sub-lede">It&rsquo;s <code>sudo</code> for agents.</p>
+<main id="top">
+  <!-- HERO -->
+  <section class="hero">
+    <div class="container hero-grid">
+      <div class="hero-copy">
+        <span class="eyebrow"><span class="pulse"></span>Governance for autonomous agents</span>
+        <h1>A firewall for what your <span class="grad">AI agents do</span> in production.</h1>
+        <p class="lede">Every tool call your agents make flows through one control plane — policy, approval, audit, kill-switch.</p>
+        <p class="sub-lede">Zero changes to agent code. It works on the <code>MCP</code> standard.</p>
         <div class="hero-cta">
-          <a class="btn btn-primary" href="#demo">Request a demo</a>
-          <a class="btn btn-ghost" href="#how">See how it works &rarr;</a>
+          <a class="btn btn-primary" href="#access">Get early access</a>
+          <a class="btn btn-ghost" href="#how">See how it works →</a>
         </div>
-
-        <div class="hero-window" aria-hidden="true">
-          <div class="window-bar">
-            <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
-            <span class="window-title">support-bot &mdash; pending approval</span>
-          </div>
-          <pre class="window-body"><code><span class="c-comment">// agent wants to issue a refund</span>
-<span class="c-key">await</span> gate.<span class="c-fn">requireApproval</span>({
-  action: <span class="c-str">"stripe.refund"</span>,
-  reason: <span class="c-str">"Customer asked for refund on #1234"</span>,
-  metadata: { amount: <span class="c-num">2500</span>, customer: <span class="c-str">"cus_abc"</span> },
-});
-
-<span class="c-comment">// → paused. waiting on a human.</span>
-<span class="c-comment">// → policy matched: amount &gt; $1000 requires approval</span>
-<span class="c-comment">// → approved by venka@unboundsec.ai in 14s</span>
-<span class="c-comment">// → logged. action proceeds.</span></code></pre>
+        <div class="install">
+          <span class="pmt">$</span>
+          <span id="install-cmd">npx @agentgate/control-plane</span>
+          <span class="copy" id="copy-btn" role="button" tabindex="0">Copy</span>
         </div>
       </div>
-    </section>
 
-    <!-- PROBLEM -->
-    <section id="problem" class="section">
-      <div class="container">
-        <div class="section-head">
-          <span class="kicker">The problem</span>
-          <h2>AI agents have write access to production. Nothing watches them.</h2>
+      <!-- INTERACTIVE TERMINAL (the live demo) -->
+      <div class="term" aria-label="Interactive demo terminal">
+        <div class="term-bar">
+          <span class="tl r"></span><span class="tl y"></span><span class="tl g"></span>
+          <span class="term-title">agentgate — live demo</span>
+          <span class="term-live"><span class="pulse"></span>live</span>
         </div>
-        <div class="grid-3">
-          <div class="card">
-            <div class="card-num">01</div>
-            <h3>Prompts aren&rsquo;t controls</h3>
-            <p>Telling an agent &ldquo;don&rsquo;t drop the prod DB&rdquo; in a system prompt fails roughly 5% of the time. That 5% is an incident.</p>
+        <div class="term-body" id="term-body"></div>
+        <div class="term-ctl">
+          <div class="label">Make your agent call a tool →</div>
+          <div class="chips" id="chips">
+            <button class="chip" data-kind="safe" data-tool="list_users" data-args="{}">list_users() <span class="tag">read</span></button>
+            <button class="chip" data-kind="danger" data-tool="drop_table" data-args='{ table: "users" }'>drop_table() <span class="tag">destructive</span></button>
+            <button class="chip" data-kind="danger" data-tool="stripe.refund" data-args="{ amount: 2500 }">stripe.refund() <span class="tag">$$$</span></button>
           </div>
-          <div class="card">
-            <div class="card-num">02</div>
-            <h3>IAM was built for humans</h3>
-            <p>RBAC, scoped tokens, and review queues assumed deterministic actors. Agents are non-deterministic, with derived intent and shifting credentials.</p>
-          </div>
-          <div class="card">
-            <div class="card-num">03</div>
-            <h3>You can&rsquo;t audit what you can&rsquo;t see</h3>
-            <p>When an agent does something it shouldn&rsquo;t, the trail is scattered across logs, prompts, and tool calls &mdash; if it exists at all.</p>
+          <div class="decide hidden" id="decide">
+            <button class="btn b-approve" id="approve">Approve</button>
+            <button class="btn b-deny" id="deny">Deny</button>
           </div>
         </div>
-      </div>
-    </section>
-
-    <!-- PRODUCT -->
-    <section id="product" class="section section-alt">
-      <div class="container">
-        <div class="section-head">
-          <span class="kicker">What agentgate does</span>
-          <h2>One primitive. Three guarantees.</h2>
-          <p class="section-sub">Drop one call into your agent. Get human approvals, declarative policy, and an audit trail of every action it ever tried to take.</p>
-        </div>
-
-        <div class="features">
-          <div class="feature">
-            <div class="feature-icon">⏸</div>
-            <h3>Human-in-the-loop</h3>
-            <p>Risky actions pause and wait. Approve or deny from the dashboard, Slack, or CLI &mdash; with the agent&rsquo;s reasoning attached.</p>
-          </div>
-          <div class="feature">
-            <div class="feature-icon">⚖</div>
-            <h3>Policy engine</h3>
-            <p>Declarative rules for auto-allow, auto-deny, and quarantine. &ldquo;Refunds under $50 auto-pass. Anything touching the users table needs a human.&rdquo;</p>
-          </div>
-          <div class="feature">
-            <div class="feature-icon">▤</div>
-            <h3>Tamper-evident audit log</h3>
-            <p>Every approval, denial, and policy decision is recorded with full context. SOC2 and incident review without bolting on a separate logger.</p>
-          </div>
-          <div class="feature">
-            <div class="feature-icon">⚡</div>
-            <h3>MCP &amp; Claude Code hooks</h3>
-            <p>Wrap any MCP server. Hook into Claude Code shell and HTTP calls. Catch dangerous actions before the model even runs them.</p>
-          </div>
-          <div class="feature">
-            <div class="feature-icon">🛡</div>
-            <h3>Blast-radius scoring</h3>
-            <p>Pre-flight scanning for Terraform plans, kubectl commands, and package installs &mdash; flag the destructive ones before they execute.</p>
-          </div>
-          <div class="feature">
-            <div class="feature-icon">⌘</div>
-            <h3>Open source</h3>
-            <p>Apache 2.0. Self-host on your own infra, or use the hosted cloud. Your audit log stays where it should.</p>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- HOW IT WORKS -->
-    <section id="how" class="section">
-      <div class="container">
-        <div class="section-head">
-          <span class="kicker">How it works</span>
-          <h2>Three lines of code. No new infrastructure.</h2>
-        </div>
-        <div class="how-grid">
-          <ol class="steps">
-            <li>
-              <span class="step-num">1</span>
-              <div>
-                <h4>Install the SDK</h4>
-                <p>Drop <code>@agentgate/sdk</code> into your agent. Point it at the control plane (self-hosted or cloud).</p>
-              </div>
-            </li>
-            <li>
-              <span class="step-num">2</span>
-              <div>
-                <h4>Wrap dangerous actions</h4>
-                <p>Before any destructive call &mdash; refund, delete, deploy &mdash; call <code>requireApproval()</code>. The agent pauses until a decision arrives.</p>
-              </div>
-            </li>
-            <li>
-              <span class="step-num">3</span>
-              <div>
-                <h4>Decide once, reuse forever</h4>
-                <p>Approve in the dashboard or Slack. Write a policy so it auto-decides next time. The audit log builds itself.</p>
-              </div>
-            </li>
-          </ol>
-
-          <div class="code-window">
-            <div class="window-bar">
-              <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
-              <span class="window-title">agent.ts</span>
-            </div>
-            <pre class="window-body"><code><span class="c-key">import</span> { AgentGate } <span class="c-key">from</span> <span class="c-str">"@agentgate/sdk"</span>;
-
-<span class="c-key">const</span> gate = <span class="c-key">new</span> <span class="c-fn">AgentGate</span>({
-  baseUrl: <span class="c-str">"https://gate.acme.com"</span>,
-  agent: <span class="c-str">"support-bot"</span>,
-});
-
-<span class="c-key">const</span> decision = <span class="c-key">await</span> gate.<span class="c-fn">requireApproval</span>({
-  action: <span class="c-str">"db.delete"</span>,
-  reason: <span class="c-str">"Purging old test users"</span>,
-  metadata: { table: <span class="c-str">"users"</span>, rows: <span class="c-num">1_847</span> },
-});
-
-<span class="c-key">if</span> (decision.approved) <span class="c-fn">runIt</span>();
-<span class="c-key">else</span> <span class="c-fn">stop</span>(decision.reason);</code></pre>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- WHO IT'S FOR -->
-    <section id="who" class="section section-alt">
-      <div class="container">
-        <div class="section-head">
-          <span class="kicker">Who it&rsquo;s for</span>
-          <h2>Built for the team on the hook when the agent misfires.</h2>
-        </div>
-        <div class="grid-3">
-          <div class="persona">
-            <h3>Platform &amp; SRE</h3>
-            <p>You&rsquo;re the one paged when an agent runs <code>DROP TABLE</code>. agentgate gives you a chokepoint without rewriting every tool.</p>
-            <ul>
-              <li>Catch destructive ops before they hit prod</li>
-              <li>Score Terraform &amp; kubectl blast radius pre-apply</li>
-              <li>One audit log across every agent in the org</li>
-            </ul>
-          </div>
-          <div class="persona">
-            <h3>Founding engineers</h3>
-            <p>You shipped an agent that touches Stripe, the prod DB, and customer email. You can&rsquo;t sleep. Wrap it in a gate in an afternoon.</p>
-            <ul>
-              <li>Three-line SDK &mdash; no rearchitecting</li>
-              <li>Self-hosted in your own VPC</li>
-              <li>Approve from Slack on the go</li>
-            </ul>
-          </div>
-          <div class="persona">
-            <h3>Security &amp; GRC</h3>
-            <p>Your engineers shipped agents before you wrote the policy. agentgate gives you observability and review without slowing them down.</p>
-            <ul>
-              <li>Tamper-evident audit trail</li>
-              <li>Declarative policy as code</li>
-              <li>Maps cleanly to SOC2, ISO 27001 change-control</li>
-            </ul>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- BENEFITS / VALUE -->
-    <section class="section">
-      <div class="container">
-        <div class="section-head">
-          <span class="kicker">Why teams adopt agentgate</span>
-          <h2>The cost of one prod-deletion incident is more than a year of agentgate.</h2>
-        </div>
-        <div class="grid-4">
-          <div class="value">
-            <div class="value-stat">~5%</div>
-            <p>Of agent tool-calls go off-script in production. That&rsquo;s how often you need a human in the loop.</p>
-          </div>
-          <div class="value">
-            <div class="value-stat">&lt; 1 day</div>
-            <p>To wrap a real agent. SDK is one function. Dashboard ships with it.</p>
-          </div>
-          <div class="value">
-            <div class="value-stat">100%</div>
-            <p>Of approval decisions logged with full agent context &mdash; reason, metadata, policy match, decider, latency.</p>
-          </div>
-          <div class="value">
-            <div class="value-stat">0</div>
-            <p>New vendors in your data path. Self-host the control plane in your own infra.</p>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- REQUEST DEMO -->
-    <section id="demo" class="section section-cta">
-      <div class="container">
-        <div class="cta-grid">
-          <div class="cta-copy">
-            <span class="kicker">Request a demo</span>
-            <h2>See an agent get stopped mid-action.</h2>
-            <p>A 20-minute walkthrough: live demo of the dashboard, the policy engine, and a real agent that tries to delete a prod table. We&rsquo;ll cover self-hosting, integrations, and pricing.</p>
-            <ul class="cta-points">
-              <li>Live HITL approval flow on your own scenario</li>
-              <li>Policy engine + Slack integration tour</li>
-              <li>Self-host vs. cloud trade-offs for your stack</li>
-            </ul>
-          </div>
-
-          <form class="cta-form" id="demoForm" novalidate>
-            <div class="field">
-              <label for="name">Name</label>
-              <input id="name" name="name" type="text" autocomplete="name" required />
-            </div>
-            <div class="field">
-              <label for="email">Work email</label>
-              <input id="email" name="email" type="email" autocomplete="email" required />
-            </div>
-            <div class="field">
-              <label for="company">Company</label>
-              <input id="company" name="company" type="text" autocomplete="organization" />
-            </div>
-            <div class="field">
-              <label for="role">Role</label>
-              <select id="role" name="role">
-                <option value="">Select&hellip;</option>
-                <option>Platform / SRE</option>
-                <option>Founding / staff engineer</option>
-                <option>Security / GRC</option>
-                <option>Eng leadership</option>
-                <option>Other</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="usecase">What does your agent do today? (optional)</label>
-              <textarea id="usecase" name="usecase" rows="3" placeholder="e.g. support bot that issues refunds and updates Zendesk tickets"></textarea>
-            </div>
-            <button class="btn btn-primary btn-block" type="submit">Request a demo</button>
-            <p class="form-footnote">We&rsquo;ll reply within one business day. No drip campaign, no SDR sequence.</p>
-            <div class="form-success" id="formSuccess" hidden>
-              <strong>Thanks &mdash; got it.</strong>
-              <span>We&rsquo;ll be in touch at the email you provided.</span>
-            </div>
-          </form>
-        </div>
-      </div>
-    </section>
-  </main>
-
-  <footer class="footer">
-    <div class="container footer-inner">
-      <div class="footer-brand">
-        <span class="brand-mark">⌘</span>
-        <span class="brand-name">agentgate</span>
-        <span class="footer-tag">&mdash; sudo for agents</span>
-      </div>
-      <div class="footer-links">
-        <a href="#product">Product</a>
-        <a href="#how">How it works</a>
-        <a href="#demo">Request a demo</a>
-        <a href="https://github.com/venkateswarisudalai/agentgate" target="_blank" rel="noopener">GitHub</a>
-      </div>
-      <div class="footer-meta">
-        <span>Apache 2.0</span>
-        <span>&copy; <span id="year"></span> agentgate</span>
       </div>
     </div>
-  </footer>
+  </section>
 
-  <script src="script.js"></script>
+  <!-- PROBLEM -->
+  <section class="sec" id="problem">
+    <div class="container">
+      <span class="kicker">The problem</span>
+      <h2>Prompts aren't a security boundary.</h2>
+      <p class="sub">In 2026, agents hold real production credentials — they push code, issue refunds, run infra commands. Telling an agent "don't" fails about 5% of the time, and that 5% is an incident. IAM and RBAC assumed a human or a stable service. Agents are neither.</p>
+      <div class="grid-3">
+        <div class="card"><div class="ic">🗝️</div><h3>Shifting credentials</h3><p>Agents derive intent at runtime and borrow whatever access they're handed. Static roles don't model that.</p></div>
+        <div class="card"><div class="ic">🎲</div><h3>Non-deterministic</h3><p>The same prompt can produce a safe action or a destructive one. You can't allow-list a probability.</p></div>
+        <div class="card"><div class="ic">🕳️</div><h3>No record</h3><p>When an agent acts in prod, most teams have no audit trail and no way to stop it mid-action.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HOW -->
+  <section class="sec" id="how">
+    <div class="container">
+      <span class="kicker">How it works</span>
+      <h2>It sits where intent becomes action.</h2>
+      <p class="sub">agentgate wraps the agent's tool calls. Your MCP client connects to the gate instead of the server. Everything is forwarded — except risky calls, which it intercepts, classifies, and gates.</p>
+      <div class="flow">
+        <div class="node"><div class="t">MCP client</div><div class="d">Claude · Cursor · Cline</div></div>
+        <div class="arrow">→</div>
+        <div class="node gate"><div class="t">⌘ agentgate</div><div class="d">classify · policy · approve · audit</div></div>
+        <div class="arrow">→</div>
+        <div class="node"><div class="t">any MCP server</div><div class="d">Stripe · DB · AWS · GitHub</div></div>
+      </div>
+      <div class="grid-3">
+        <div class="card"><div class="ic">⚖️</div><h3>Policy</h3><p>Rules allow, deny, require approval, or quarantine an agent — by agent, action, and condition.</p></div>
+        <div class="card"><div class="ic">✋</div><h3>Human-in-the-loop</h3><p>Destructive calls freeze and wait. A human approves or denies from the dashboard, terminal, or phone.</p></div>
+        <div class="card"><div class="ic">🧾</div><h3>Audit</h3><p>Every call — allowed, denied, pending — is recorded. A flight recorder for what your agents did.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SHIP / INSTALL -->
+  <section class="sec" id="ship">
+    <div class="container">
+      <span class="kicker">Get started</span>
+      <h2>Two commands. Zero agent code.</h2>
+      <p class="sub">Gate a real coding agent — one that actually runs <code class="mono">rm -rf</code>, force-pushes, edits <code class="mono">.env</code> — in under a minute.</p>
+      <div class="ship">
+        <div class="row"><span class="n">1</span><code>npx @agentgate/control-plane</code><span class="cmt">starts the dashboard on :4000</span></div>
+        <div class="row"><span class="n">2</span><code>npx @agentgate/claude-code-hook init</code><span class="cmt">installs the safety hook — no JSON editing</span></div>
+        <div class="row"><span class="n">→</span><code style="color:var(--muted)">restart Claude Code — destructive calls now pause for you</code></div>
+      </div>
+      <div class="hero-cta" style="margin-top:24px">
+        <a class="btn btn-ghost" href="https://github.com/venkateswarisudalai/agentgate" target="_blank" rel="noopener">Read the docs on GitHub ↗</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- PIECES -->
+  <section class="sec" id="pieces">
+    <div class="container">
+      <span class="kicker">What's inside</span>
+      <h2>One control plane, many ways in.</h2>
+      <div class="grid-3">
+        <div class="card"><h3 class="mono" style="color:var(--accent)">mcp-gate</h3><p>Wraps any MCP server. The zero-code gateway — point your client at it.</p></div>
+        <div class="card"><h3 class="mono" style="color:var(--accent)">claude-code-hook</h3><p>Gates Claude Code's Bash, Edit and Write calls before they run.</p></div>
+        <div class="card"><h3 class="mono" style="color:var(--accent)">control-plane</h3><p>The server + dashboard: policy engine, live audit log, agent roster.</p></div>
+        <div class="card"><h3 class="mono" style="color:var(--accent)">sdk</h3><p>One primitive — <code class="mono">requireApproval()</code> — to gate custom actions in your own code.</p></div>
+        <div class="card"><h3 class="mono" style="color:var(--accent)">cli</h3><p>Approve or deny agent actions without leaving your terminal.</p></div>
+        <div class="card"><h3 class="mono" style="color:var(--accent)">pkg-scan</h3><p>Supply-chain risk signals on packages an agent tries to install.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- LEAD CAPTURE -->
+  <section class="sec access" id="access">
+    <div class="container">
+      <span class="kicker">Early access</span>
+      <h2>Gate your agents before they gate you.</h2>
+      <p class="sub" style="margin-inline:auto">Open source and self-hostable today. Drop your email for the hosted Cloud beta — team approvals, SSO, audit retention, approve-from-your-phone.</p>
+      <form class="capture" id="capture" novalidate>
+        <input type="email" id="email" name="email" placeholder="you@company.com" autocomplete="email" required aria-label="Email address" />
+        <button class="btn btn-primary" type="submit">Request access</button>
+      </form>
+      <div class="capture-note" id="capture-note">No spam. One email when the beta opens.</div>
+      <div class="hero-cta" style="justify-content:center; margin-top:26px">
+        <a class="btn btn-ghost" href="https://github.com/venkateswarisudalai/agentgate" target="_blank" rel="noopener">Try it now on GitHub ↗</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="container foot-inner">
+    <span class="brand"><span class="brand-mark">⌘</span><span>agentgate</span></span>
+    <span class="sp"></span>
+    <span>Apache-2.0</span>
+    <a href="https://github.com/venkateswarisudalai/agentgate" target="_blank" rel="noopener">GitHub</a>
+  </div>
+</footer>
+
+<script>
+  // ============================================================
+  // LEAD CAPTURE — set FORM_ENDPOINT to your form backend to collect
+  // emails (Formspree / Tally / Buttondown / your own API). Until you
+  // set it, the form falls back to opening a pre-filled email to you.
+  //   Formspree: https://formspree.io  → paste the form URL below.
+  // ============================================================
+  const FORM_ENDPOINT = ""; // e.g. "https://formspree.io/f/xxxxxx"
+  const FALLBACK_EMAIL = "venkateswari1095@gmail.com";
+
+  const form = document.getElementById("capture");
+  const emailInput = document.getElementById("email");
+  const note = document.getElementById("capture-note");
+
+  function showOk(msg) {
+    form.classList.add("hidden");
+    note.className = "capture-ok";
+    note.textContent = msg;
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = emailInput.value.trim();
+    if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      emailInput.focus(); note.textContent = "Enter a valid email address."; return;
+    }
+    if (FORM_ENDPOINT) {
+      try {
+        const r = await fetch(FORM_ENDPOINT, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ email, source: "landing" }),
+        });
+        if (!r.ok) throw new Error(r.status);
+        showOk("✓ You're on the list — talk soon.");
+      } catch {
+        note.textContent = "Something went wrong. Email us: " + FALLBACK_EMAIL;
+      }
+    } else {
+      // No backend configured yet → open a pre-filled email.
+      const subject = encodeURIComponent("agentgate early access");
+      const body = encodeURIComponent("I'd like early access to the agentgate Cloud beta.\n\nEmail: " + email);
+      window.location.href = "mailto:" + FALLBACK_EMAIL + "?subject=" + subject + "&body=" + body;
+      showOk("✓ Opening your email client…");
+    }
+  });
+
+  // ---- copy button ----
+  const copyBtn = document.getElementById("copy-btn");
+  copyBtn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(document.getElementById("install-cmd").textContent.trim());
+      copyBtn.textContent = "Copied ✓";
+      setTimeout(() => (copyBtn.textContent = "Copy"), 1400);
+    } catch { copyBtn.textContent = "⌘C"; }
+  });
+
+  // ---- interactive terminal ----
+  const body = document.getElementById("term-body");
+  const chipsWrap = document.getElementById("chips");
+  const chips = [...chipsWrap.querySelectorAll(".chip")];
+  const decide = document.getElementById("decide");
+  let busy = false, cursorEl = null;
+
+  function line(html) {
+    const d = document.createElement("div");
+    d.className = "ln"; d.innerHTML = html; body.appendChild(d);
+    while (body.childElementCount > 9) body.removeChild(body.firstChild);
+    return d;
+  }
+  function setCursor(on) {
+    if (cursorEl) { cursorEl.remove(); cursorEl = null; }
+    if (on) { cursorEl = document.createElement("span"); cursorEl.className = "cursor"; body.lastChild && body.lastChild.appendChild(cursorEl); }
+  }
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+  function boot() {
+    line('<span class="c-dim"># an unmodified MCP client, talking through agentgate</span>');
+    line('<span class="c-dim"># pick a tool call below — watch the gate decide ↓</span>');
+    line('&nbsp;');
+  }
+  const setChips = (d) => chips.forEach((c) => (c.disabled = d));
+
+  async function runSafe(tool, args) {
+    line('<span class="c-prompt">agent ›</span> <span class="c-tool">' + tool + '</span><span class="c-cmd">(' + esc(args) + ')</span>');
+    setCursor(true); await wait(420); setCursor(false);
+    line('<span class="c-ok">✓ passed through</span> <span class="c-dim">— read-only, no approval needed</span>');
+    line('&nbsp;');
+  }
+  function runDanger(tool, args) {
+    line('<span class="c-prompt">agent ›</span> <span class="c-tool">' + tool + '</span><span class="c-cmd">(' + esc(args) + ')</span>');
+    setCursor(true);
+    return wait(500).then(() => {
+      setCursor(false);
+      line('<span class="c-warn">⏸ frozen</span> <span class="c-dim">— classified high risk · waiting on a human</span>');
+      decide.classList.remove("hidden");
+      return new Promise((resolve) => {
+        const ap = document.getElementById("approve"), dn = document.getElementById("deny");
+        const done = (approved) => {
+          decide.classList.add("hidden"); ap.onclick = dn.onclick = null;
+          line(approved
+            ? '<span class="c-ok">✓ approved by you</span> <span class="c-dim">→ call forwarded to the server</span>'
+            : '<span class="c-bad">✗ denied</span> <span class="c-dim">→ the destructive call never ran</span>');
+          line('&nbsp;'); resolve();
+        };
+        ap.onclick = () => done(true); dn.onclick = () => done(false);
+      });
+    });
+  }
+
+  chipsWrap.addEventListener("click", async (e) => {
+    const chip = e.target.closest(".chip");
+    if (!chip || busy) return;
+    busy = true; setChips(true);
+    if (chip.dataset.kind === "safe") await runSafe(chip.dataset.tool, chip.dataset.args);
+    else await runDanger(chip.dataset.tool, chip.dataset.args);
+    busy = false; setChips(false);
+  });
+
+  boot();
+</script>
 </body>
 </html>
