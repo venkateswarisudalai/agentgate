@@ -14,6 +14,7 @@
     "demo": "npm run build --workspace=@agentgate/sdk && npm run build --workspace=@agentgate/control-plane && npm run start --workspace=@agentgate/control-plane",
     "demo:deploy": "npm run build --workspace=@agentgate/sdk && npm run build --workspace=@agentgate/example-deploy-demo && node examples/deploy-demo/dist/index.js",
     "demo:mcp": "npm run build --workspace=@agentgate/sdk && npm run build --workspace=@agentgate/mcp-gate && npm run build --workspace=@agentgate/example-fake-mcp-server && npm run build --workspace=@agentgate/example-mcp-demo && node examples/mcp-demo/dist/index.js",
+    "demo:incident": "npm run build --workspace=@agentgate/sdk && npm run build --workspace=@agentgate/example-incident-agent && node examples/incident-agent/dist/index.js",
     "example": "npm run start --workspace=@agentgate/example-dangerous-agent"
   },
   "devDependencies": {

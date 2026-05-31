@@ -1,0 +1,17 @@
+{
+  "name": "@agentgate/example-incident-agent",
+  "version": "0.0.1",
+  "private": true,
+  "description": "An AI DevOps engineer: watches logs, detects a fault, diagnoses it, proposes a rollback, and gates the fix through agentgate before it runs.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@agentgate/sdk": "^0.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0"
+  }
+}
