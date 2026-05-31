@@ -15,8 +15,18 @@ production access to.
 
 ```bash
 npm run demo            # terminal 1: agentgate control plane + dashboard on :4000
-npm run demo:incident   # terminal 2: the AI DevOps engineer
+npm run demo:incident   # terminal 2: the AI DevOps engineer (one-shot triage)
 ```
+
+For the **autonomous** version — a standalone agent that runs forever, catching
+incident after incident on its own:
+
+```bash
+node examples/incident-agent/dist/index.js --watch
+```
+
+Set `ANTHROPIC_API_KEY` to make the diagnosis a real Claude call; without it the
+agent falls back to a deterministic heuristic so the demo always runs.
 
 Watch the terminal: `orders-api` is healthy, a `v43` deploy lands, the 5xx rate
 spikes. The agent detects the anomaly, correlates it with the deploy, and proposes
