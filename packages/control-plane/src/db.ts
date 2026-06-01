@@ -25,6 +25,19 @@ export type AuditRow = {
   actor: string | null;
   payload: string;
   created_at: string;
+  prev_hash: string | null;
+  hash: string | null;
+};
+
+export type ShadowRow = {
+  id: number;
+  agent: string;
+  action: string;
+  severity: string;
+  reason: string | null;
+  source: string | null;
+  metadata: string;
+  created_at: string;
 };
 
 export type PolicyEffect = "allow" | "deny" | "require_approval" | "quarantine_agent";
@@ -94,6 +107,13 @@ function hasColumn(db: Database.Database, table: string, column: string): boolea
 function migrate(db: Database.Database): void {
   if (!hasColumn(db, "approvals", "session_id")) {
     db.exec(`ALTER TABLE approvals ADD COLUMN session_id TEXT`);
+  }
+  // Tamper-evident audit chain: hash columns added to pre-existing DBs.
+  if (!hasColumn(db, "audit_log", "prev_hash")) {
+    db.exec(`ALTER TABLE audit_log ADD COLUMN prev_hash TEXT`);
+  }
+  if (!hasColumn(db, "audit_log", "hash")) {
+    db.exec(`ALTER TABLE audit_log ADD COLUMN hash TEXT`);
   }
   // Index must be created AFTER the column exists. Pre-existing DBs created
   // before session_id was introduced won't have the column at the time the
@@ -172,6 +192,8 @@ export function openDb(path: string): Database.Database {
       actor TEXT,
       payload TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      prev_hash TEXT,
+      hash TEXT,
       FOREIGN KEY (approval_id) REFERENCES approvals(id)
     );
 
@@ -240,6 +262,22 @@ export function openDb(path: string): Database.Database {
       value TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- Shadow (log-only) mode ledger: what the gate WOULD have blocked if it
+    -- were enforcing. Lets a team measure their own false-positive rate before
+    -- turning enforcement on. Never blocks anything itself.
+    CREATE TABLE IF NOT EXISTS shadow_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent TEXT NOT NULL,
+      action TEXT NOT NULL,
+      severity TEXT NOT NULL DEFAULT 'unknown',
+      reason TEXT,
+      source TEXT,
+      metadata TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_shadow_time ON shadow_log(created_at DESC);
   `);
   migrate(db);
   return db;

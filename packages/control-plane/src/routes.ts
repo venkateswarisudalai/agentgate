@@ -9,6 +9,7 @@ import type {
   PolicyEffect,
   PolicyRow,
   SessionRow,
+  ShadowRow,
 } from "./db.js";
 import { bus } from "./events.js";
 import {
@@ -27,6 +28,25 @@ import {
   revokeCredential,
   verifyCredential,
 } from "./credentials.js";
+import { appendAudit, redact, verifyAuditChain } from "./audit.js";
+import {
+  authenticate,
+  canApprove,
+  type AuthConfig,
+  type Principal,
+} from "./auth.js";
+
+const DEV_AUTH: AuthConfig = {
+  tokens: new Map(),
+  configured: false,
+  devActor: "local:dev",
+};
+
+function principalOf(req: { principal?: Principal }): Principal {
+  // The onRequest hook always assigns this (dev principal when unauthenticated
+  // and auth is not configured). The fallback keeps types honest.
+  return req.principal ?? { id: "local:dev", role: "admin" };
+}
 
 type CreateBody = {
   agent: string;
@@ -194,7 +214,8 @@ function rowToDecision(row: ApprovalRow) {
     agent: row.agent,
     action: row.action,
     reason: row.reason,
-    metadata: JSON.parse(row.metadata),
+    // Redact secrets/PII that may have ridden in on tool inputs before serving.
+    metadata: redact(JSON.parse(row.metadata)),
     status: row.status,
     approved: row.status === "approved",
     decidedBy: row.decided_by,
@@ -205,7 +226,36 @@ function rowToDecision(row: ApprovalRow) {
   };
 }
 
-export function registerRoutes(app: FastifyInstance, db: Database.Database): void {
+export function registerRoutes(
+  app: FastifyInstance,
+  db: Database.Database,
+  auth: AuthConfig = DEV_AUTH,
+): void {
+  // ---------- auth ----------
+  // Every /v1 request is authenticated. In TEAM MODE a valid bearer token is
+  // required; in DEV MODE (no tokens configured, loopback-only bind enforced in
+  // index.ts) requests are stamped with a single non-forgeable local identity.
+  // /v1/events is exempt: it is a read-only SSE stream and browser EventSource
+  // cannot send an Authorization header. Static assets and /healthz are not
+  // under /v1 and pass through untouched.
+  app.addHook("onRequest", async (req, reply) => {
+    const path = req.url.split("?")[0];
+    if (!path.startsWith("/v1/")) return;
+    if (path === "/v1/events") return;
+    const principal = authenticate(auth, req.headers.authorization);
+    if (auth.configured) {
+      if (!principal) {
+        return reply.code(401).send({ error: "missing or invalid bearer token" });
+      }
+      (req as { principal?: Principal }).principal = principal;
+    } else {
+      (req as { principal?: Principal }).principal = {
+        id: auth.devActor,
+        role: "admin",
+      };
+    }
+  });
+
   // ---------- approvals ----------
 
   app.post<{ Body: CreateBody }>("/v1/approvals", async (req, reply) => {
@@ -246,14 +296,13 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
         `agent quarantined until ${qState.until}: ${qState.reason ?? ""}`.trim(),
         sessionId ?? null,
       );
-      db.prepare(
-        `INSERT INTO audit_log (approval_id, event, actor, payload)
-         VALUES (?, 'approval.created', ?, ?)`,
-      ).run(id, agent, metaJson);
-      db.prepare(
-        `INSERT INTO audit_log (approval_id, event, actor, payload)
-         VALUES (?, 'approval.quarantine_blocked', ?, ?)`,
-      ).run(id, actor, JSON.stringify({ until: qState.until, reason: qState.reason }));
+      appendAudit(db, { approvalId: id, event: "approval.created", actor: agent, payload: meta });
+      appendAudit(db, {
+        approvalId: id,
+        event: "approval.quarantine_blocked",
+        actor,
+        payload: { until: qState.until, reason: qState.reason },
+      });
       bus.emitEvent({ type: "approval.created", approvalId: id });
       bus.emitEvent({ type: "approval.decided", approvalId: id, status: "denied" });
       return reply.code(201).send({
@@ -282,23 +331,18 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
            (id, agent, action, reason, metadata, status, decided_by, decided_at, decision_reason, session_id)
          VALUES (?, ?, ?, ?, ?, 'denied', ?, datetime('now'), ?, ?)`,
       ).run(id, agent, action, reason, metaJson, actor, reasonText, sessionId ?? null);
-      db.prepare(
-        `INSERT INTO audit_log (approval_id, event, actor, payload)
-         VALUES (?, 'approval.created', ?, ?)`,
-      ).run(id, agent, metaJson);
-      db.prepare(
-        `INSERT INTO audit_log (approval_id, event, actor, payload)
-         VALUES (?, 'approval.auto_quarantined', ?, ?)`,
-      ).run(
-        id,
+      appendAudit(db, { approvalId: id, event: "approval.created", actor: agent, payload: meta });
+      appendAudit(db, {
+        approvalId: id,
+        event: "approval.auto_quarantined",
         actor,
-        JSON.stringify({
+        payload: {
           policyId: match.policyId,
           policyName: match.policyName,
           quarantineMinutes: minutes,
           quarantinedUntil: until,
-        }),
-      );
+        },
+      });
       bus.emitEvent({ type: "approval.created", approvalId: id });
       bus.emitEvent({ type: "approval.decided", approvalId: id, status: "denied" });
       bus.emitEvent({ type: "agent.quarantined", agent, until });
@@ -331,19 +375,13 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
         `auto-${status} by policy ${autoDecide.policyName}`,
         sessionId ?? null,
       );
-      db.prepare(
-        `INSERT INTO audit_log (approval_id, event, actor, payload)
-         VALUES (?, 'approval.created', ?, ?)`,
-      ).run(id, agent, metaJson);
-      db.prepare(
-        `INSERT INTO audit_log (approval_id, event, actor, payload)
-         VALUES (?, ?, ?, ?)`,
-      ).run(
-        id,
-        `approval.auto_${status}`,
+      appendAudit(db, { approvalId: id, event: "approval.created", actor: agent, payload: meta });
+      appendAudit(db, {
+        approvalId: id,
+        event: `approval.auto_${status}`,
         actor,
-        JSON.stringify({ policyId: autoDecide.policyId, policyName: autoDecide.policyName }),
-      );
+        payload: { policyId: autoDecide.policyId, policyName: autoDecide.policyName },
+      });
       bus.emitEvent({ type: "approval.created", approvalId: id });
       bus.emitEvent({ type: "approval.decided", approvalId: id, status });
       return reply
@@ -355,19 +393,14 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
       `INSERT INTO approvals (id, agent, action, reason, metadata, status, session_id)
        VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
     ).run(id, agent, action, reason, metaJson, sessionId ?? null);
-    db.prepare(
-      `INSERT INTO audit_log (approval_id, event, actor, payload)
-       VALUES (?, 'approval.created', ?, ?)`,
-    ).run(id, agent, metaJson);
+    appendAudit(db, { approvalId: id, event: "approval.created", actor: agent, payload: meta });
     if (match && match.effect === "require_approval") {
-      db.prepare(
-        `INSERT INTO audit_log (approval_id, event, actor, payload)
-         VALUES (?, 'approval.policy_matched', ?, ?)`,
-      ).run(
-        id,
-        `policy:${match.policyName}`,
-        JSON.stringify({ policyId: match.policyId, policyName: match.policyName }),
-      );
+      appendAudit(db, {
+        approvalId: id,
+        event: "approval.policy_matched",
+        actor: `policy:${match.policyName}`,
+        payload: { policyId: match.policyId, policyName: match.policyName },
+      });
     }
     bus.emitEvent({ type: "approval.created", approvalId: id });
     return reply.code(201).send({ id, status: "pending" });
@@ -410,9 +443,18 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
     "/v1/approvals/:id/decide",
     async (req, reply) => {
       const { id } = req.params;
-      const { approved, decidedBy, reason } = req.body ?? ({} as DecideBody);
+      const { approved, reason } = req.body ?? ({} as DecideBody);
       if (typeof approved !== "boolean") {
         return reply.code(400).send({ error: "approved (boolean) is required" });
+      }
+      // The approver's identity comes from the authenticated principal — never
+      // from the request body. This is what makes "a human approved this" mean
+      // something: you cannot stamp an approval with someone else's name.
+      const principal = principalOf(req as { principal?: Principal });
+      if (!canApprove(principal)) {
+        return reply
+          .code(403)
+          .send({ error: "approver role required (operator or admin)" });
       }
       const row = db
         .prepare(`SELECT * FROM approvals WHERE id = ?`)
@@ -421,17 +463,26 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
       if (row.status !== "pending") {
         return reply.code(409).send({ error: `already ${row.status}` });
       }
+      // Separation of duties: the agent that requested an action cannot be the
+      // identity that approves it.
+      if (principal.id === row.agent) {
+        return reply
+          .code(403)
+          .send({ error: "requester cannot approve their own request" });
+      }
       const status = approved ? "approved" : "denied";
-      const actor = decidedBy ?? "anonymous";
+      const actor = principal.id;
       db.prepare(
         `UPDATE approvals
          SET status = ?, decided_by = ?, decided_at = datetime('now'), decision_reason = ?
          WHERE id = ?`,
       ).run(status, actor, reason ?? null, id);
-      db.prepare(
-        `INSERT INTO audit_log (approval_id, event, actor, payload)
-         VALUES (?, ?, ?, ?)`,
-      ).run(id, `approval.${status}`, actor, JSON.stringify({ reason }));
+      appendAudit(db, {
+        approvalId: id,
+        event: `approval.${status}`,
+        actor,
+        payload: { reason },
+      });
       bus.emitEvent({ type: "approval.decided", approvalId: id, status });
       const updated = db
         .prepare(`SELECT * FROM approvals WHERE id = ?`)
@@ -466,6 +517,13 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
       payload: JSON.parse(r.payload),
       createdAt: r.created_at,
     }));
+  });
+
+  // Recompute the whole audit hash chain. ok=false means a row was edited,
+  // deleted, or reordered after it was written. This is the tamper-evidence
+  // check — wire it into monitoring to detect log mutation.
+  app.get("/v1/audit/verify", async () => {
+    return verifyAuditChain(db);
   });
 
   // ---------- sessions ----------
@@ -744,19 +802,17 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
         ttlSeconds: body.ttlSeconds,
         maxUses: body.maxUses,
       });
-      db.prepare(
-        `INSERT INTO audit_log (approval_id, event, actor, payload)
-         VALUES (?, 'credential.issued', ?, ?)`,
-      ).run(
-        body.approvalId,
-        "agentgate:control-plane",
-        JSON.stringify({
+      appendAudit(db, {
+        approvalId: body.approvalId,
+        event: "credential.issued",
+        actor: "agentgate:control-plane",
+        payload: {
           credentialId: result.credentialId,
           agent: result.agent,
           action: result.action,
           expiresAt: result.expiresAt,
-        }),
-      );
+        },
+      });
       return reply.code(201).send(result);
     } catch (err) {
       if (err instanceof CredentialError) {
@@ -833,6 +889,81 @@ export function registerRoutes(app: FastifyInstance, db: Database.Database): voi
         )
         .all(...params) as CredentialRow[];
       return rows.map(rowToCredential);
+    },
+  );
+
+  // ---------- shadow (log-only) ledger ----------
+  // What the gate WOULD have blocked if it were enforcing. Lets a team see
+  // their own false-positive rate before turning enforcement on. Recording here
+  // never blocks anything — clients post best-effort and ignore failures.
+
+  app.post<{
+    Body: {
+      agent?: string;
+      action?: string;
+      severity?: string;
+      reason?: string;
+      source?: string;
+      metadata?: Record<string, unknown>;
+    };
+  }>("/v1/shadow", async (req, reply) => {
+    const b = req.body ?? {};
+    if (!b.agent || !b.action) {
+      return reply.code(400).send({ error: "agent and action are required" });
+    }
+    const result = db
+      .prepare(
+        `INSERT INTO shadow_log (agent, action, severity, reason, source, metadata)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        b.agent,
+        b.action,
+        b.severity ?? "unknown",
+        b.reason ?? null,
+        b.source ?? null,
+        JSON.stringify(redact(b.metadata ?? {})),
+      );
+    bus.emitEvent({ type: "shadow.recorded", agent: b.agent, action: b.action });
+    return reply.code(201).send({ id: result.lastInsertRowid });
+  });
+
+  app.get<{ Querystring: { agent?: string; limit?: string } }>(
+    "/v1/shadow",
+    async (req) => {
+      const conds: string[] = [];
+      const params: unknown[] = [];
+      if (req.query.agent) {
+        conds.push("agent = ?");
+        params.push(req.query.agent);
+      }
+      const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+      const limit = Math.min(parseInt(req.query.limit ?? "200", 10) || 200, 1000);
+      params.push(limit);
+      const rows = db
+        .prepare(
+          `SELECT * FROM shadow_log ${where} ORDER BY created_at DESC LIMIT ?`,
+        )
+        .all(...params) as ShadowRow[];
+      const total = (
+        db.prepare(`SELECT COUNT(*) AS n FROM shadow_log ${where}`).get(
+          ...params.slice(0, -1),
+        ) as { n: number }
+      ).n;
+      return {
+        total,
+        wouldHaveBlocked: total,
+        entries: rows.map((r) => ({
+          id: r.id,
+          agent: r.agent,
+          action: r.action,
+          severity: r.severity,
+          reason: r.reason,
+          source: r.source,
+          metadata: JSON.parse(r.metadata),
+          createdAt: r.created_at,
+        })),
+      };
     },
   );
 

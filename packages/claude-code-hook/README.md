@@ -41,7 +41,11 @@ Restart Claude Code (or start a new session) to pick up the hook.
 | `AGENTGATE_URL` | `http://localhost:4000` | Control plane base URL |
 | `AGENTGATE_AGENT` | `claude-code` | Agent identity recorded in audit log |
 | `AGENTGATE_TIMEOUT_MS` | `300000` (5 min) | How long to wait for approval before blocking |
-| `AGENTGATE_FAIL_OPEN` | unset | If `1`, allow tool calls when the control plane is unreachable. Default is fail-closed. |
+| `AGENTGATE_TOKEN` | unset | Bearer token sent to the control plane (required in team mode) |
+| `AGENTGATE_MIN_SEVERITY` | `high` | Gate floor. Default gates high/irreversible only; set `medium` to also gate routine writes |
+| `AGENTGATE_SHADOW` | unset | If `1`, log what *would* have been gated and allow it (measure false-positive rate before enforcing) |
+
+> The control plane is **always fail-closed**: if it is unreachable, the hook blocks. There is no client-side env var to allow on outage — that would be a one-flag bypass of the control. An outage-allow policy belongs on the server, role-gated.
 
 ## Default-dangerous patterns (subset)
 

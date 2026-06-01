@@ -15,6 +15,13 @@ type WrappedProc = ChildProcessByStdio<Writable, Readable, null>;
 import * as readline from "node:readline";
 import { AgentGate, ApprovalTimeoutError } from "@agentgate/sdk";
 import { classify } from "./heuristics.js";
+import {
+  isShadowMode,
+  parseMinRisk,
+  recordShadow,
+  shouldGate,
+  type Risk,
+} from "./gating.js";
 
 type JsonRpc = { jsonrpc: "2.0"; id?: number | string; method?: string; params?: unknown; result?: unknown; error?: unknown };
 
@@ -32,6 +39,8 @@ Options:
   --allow <list>       comma-separated tool names to always allow (no approval)
   --deny  <list>       comma-separated tool names to always deny
   --gate-all           require approval for every tools/call (override heuristics)
+  --gate-medium        also gate medium-risk calls (default: high/irreversible only)
+  --shadow             log-only: record what WOULD gate, but forward everything
   --timeout-ms <n>     approval timeout (default 300000 = 5 min)
 
 Example:
@@ -46,6 +55,9 @@ type Cfg = {
   allow: Set<string>;
   deny: Set<string>;
   gateAll: boolean;
+  minRisk: Risk;
+  shadow: boolean;
+  apiKey: string | undefined;
   timeoutMs: number;
   cmd: string;
   args: string[];
@@ -74,6 +86,9 @@ function parseArgs(argv: string[]): Cfg {
     allow: new Set((get("--allow") ?? "").split(",").map((s) => s.trim()).filter(Boolean)),
     deny: new Set((get("--deny") ?? "").split(",").map((s) => s.trim()).filter(Boolean)),
     gateAll: has("--gate-all"),
+    minRisk: parseMinRisk(has("--gate-medium") ? "medium" : undefined, process.env),
+    shadow: isShadowMode(has("--shadow"), process.env),
+    apiKey: process.env.AGENTGATE_TOKEN || undefined,
     timeoutMs: parseInt(get("--timeout-ms") ?? "300000", 10),
     cmd: rest[0],
     args: rest.slice(1),
@@ -98,6 +113,7 @@ async function main() {
   const gate = new AgentGate({
     baseUrl: cfg.gateUrl,
     agent: cfg.agent,
+    apiKey: cfg.apiKey,
     pollIntervalMs: 750,
     defaultTimeoutMs: cfg.timeoutMs,
   });
@@ -170,10 +186,26 @@ async function handleToolsCall(
     return;
   }
 
-  // Classify risk.
+  // Classify risk. Default gates high/irreversible only; medium and below
+  // forward unless --gate-medium / --gate-all raises the floor.
   const decision = classify(toolName, args);
-  if (!cfg.gateAll && decision.risk === "low") {
-    // Heuristic says safe — pass through silently.
+  const wouldGate = cfg.gateAll || shouldGate(decision.risk, cfg.minRisk);
+  if (!wouldGate) {
+    send(child.stdin, msg);
+    return;
+  }
+
+  // Shadow mode: record the would-be gate, then forward (never block).
+  if (cfg.shadow) {
+    log(`[SHADOW] would gate '${toolName}' (risk=${decision.risk}) — forwarding`);
+    await recordShadow(cfg.gateUrl, cfg.apiKey, {
+      agent: cfg.agent,
+      action: `mcp.${toolName}`,
+      severity: decision.risk,
+      reason: decision.headline,
+      source: "mcp-gate",
+      metadata: { tool: toolName, reasons: decision.reasons },
+    });
     send(child.stdin, msg);
     return;
   }

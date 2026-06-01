@@ -6,7 +6,8 @@ export type GateEvent =
   | { type: "session.started"; sessionId: string; agent: string }
   | { type: "session.ended"; sessionId: string; agent: string }
   | { type: "agent.quarantined"; agent: string; until: string }
-  | { type: "agent.released"; agent: string };
+  | { type: "agent.released"; agent: string }
+  | { type: "shadow.recorded"; agent: string; action: string };
 
 class GateBus extends EventEmitter {
   emitEvent(e: GateEvent): void {

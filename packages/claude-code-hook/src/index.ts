@@ -3,6 +3,12 @@ import { AgentGate, ApprovalTimeoutError } from "@agentgate/sdk";
 import { scanMany, type ScanResult, type Risk } from "@agentgate/pkg-scan";
 import { evaluate, type ToolPayload } from "./rules.js";
 import { detectInstall, type InstallIntent } from "./install-detector.js";
+import {
+  isShadowMode,
+  parseMinSeverity,
+  recordShadow,
+  shouldGate,
+} from "./gating.js";
 
 type HookInput = ToolPayload & {
   session_id?: string;
@@ -13,7 +19,9 @@ type HookInput = ToolPayload & {
 const BASE_URL = process.env.AGENTGATE_URL ?? "http://localhost:4000";
 const AGENT_NAME = process.env.AGENTGATE_AGENT ?? "claude-code";
 const TIMEOUT_MS = parseInt(process.env.AGENTGATE_TIMEOUT_MS ?? "300000", 10);
-const FAIL_OPEN = process.env.AGENTGATE_FAIL_OPEN === "1";
+const API_KEY = process.env.AGENTGATE_TOKEN || undefined;
+const MIN_SEVERITY = parseMinSeverity(process.env);
+const SHADOW = isShadowMode(process.env);
 
 async function readStdin(): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -91,6 +99,21 @@ async function handleInstallIntent(
     process.exit(0);
   }
 
+  if (SHADOW) {
+    process.stderr.write(
+      `agentgate: [SHADOW] would gate ${intent.manager} install (risk=${overall}) — allowing\n`,
+    );
+    await recordShadow(BASE_URL, API_KEY, {
+      agent: AGENT_NAME,
+      action: `pkg.install.${intent.ecosystem}`,
+      severity: overall,
+      reason: `${intent.manager} install: ${intent.packages.map((p) => p.name).join(", ")} — risk ${overall}`,
+      source: "claude-code-hook",
+      metadata: { packages: intent.packages, scan: results },
+    });
+    process.exit(0);
+  }
+
   process.stderr.write(
     `agentgate: overall risk=${overall.toUpperCase()} — requesting approval at ${BASE_URL}\n`,
   );
@@ -98,6 +121,7 @@ async function handleInstallIntent(
   const gate = new AgentGate({
     baseUrl: BASE_URL,
     agent: AGENT_NAME,
+    apiKey: API_KEY,
     pollIntervalMs: 750,
     defaultTimeoutMs: TIMEOUT_MS,
   });
@@ -137,15 +161,8 @@ async function handleInstallIntent(
       process.stderr.write(`agentgate: ⏱  approval timed out — blocking for safety\n`);
       process.exit(2);
     }
-    if (FAIL_OPEN) {
-      process.stderr.write(
-        `agentgate: control plane unreachable, AGENTGATE_FAIL_OPEN=1 — allowing\n`,
-      );
-      process.exit(0);
-    }
     process.stderr.write(
-      `agentgate: control plane unreachable (${(err as Error).message}) — blocking for safety. ` +
-        `Set AGENTGATE_FAIL_OPEN=1 to allow on outage.\n`,
+      `agentgate: control plane unreachable (${(err as Error).message}) — blocking for safety.\n`,
     );
     process.exit(2);
   }
@@ -186,6 +203,33 @@ async function main() {
   }
 
   const action = describeAction(payload);
+
+  // Default to irreversible-only gating. A match below the severity floor is
+  // surfaced but allowed, so benign writes don't drown the operator in prompts.
+  if (!shouldGate(match.severity, MIN_SEVERITY)) {
+    process.stderr.write(
+      `agentgate: ${match.severity} match [${match.ruleId}] below gate floor '${MIN_SEVERITY}' — allowing. ` +
+        `Set AGENTGATE_MIN_SEVERITY=${match.severity} to gate it.\n`,
+    );
+    process.exit(0);
+  }
+
+  // Shadow mode: record what would have been gated, then allow.
+  if (SHADOW) {
+    process.stderr.write(
+      `agentgate: [SHADOW] would gate [${match.category}/${match.ruleId}] — ${match.impact.headline} — allowing\n`,
+    );
+    await recordShadow(BASE_URL, API_KEY, {
+      agent: AGENT_NAME,
+      action: `claude-code.${payload.tool_name ?? "unknown"}`,
+      severity: match.severity,
+      reason: match.impact.headline,
+      source: "claude-code-hook",
+      metadata: { ruleId: match.ruleId, category: match.category, action },
+    });
+    process.exit(0);
+  }
+
   process.stderr.write(
     `agentgate: ${match.severity.toUpperCase()} risk [${match.category}/${match.ruleId}] — ${match.impact.headline}\n` +
       `agentgate: requesting approval at ${BASE_URL} (timeout ${Math.round(TIMEOUT_MS / 1000)}s)\n`,
@@ -194,6 +238,7 @@ async function main() {
   const gate = new AgentGate({
     baseUrl: BASE_URL,
     agent: AGENT_NAME,
+    apiKey: API_KEY,
     pollIntervalMs: 750,
     defaultTimeoutMs: TIMEOUT_MS,
   });
@@ -235,15 +280,8 @@ async function main() {
       process.stderr.write(`agentgate: ⏱  approval timed out — blocking for safety\n`);
       process.exit(2);
     }
-    if (FAIL_OPEN) {
-      process.stderr.write(
-        `agentgate: control plane unreachable, AGENTGATE_FAIL_OPEN=1 — allowing\n`,
-      );
-      process.exit(0);
-    }
     process.stderr.write(
-      `agentgate: control plane unreachable (${(err as Error).message}) — blocking for safety. ` +
-        `Set AGENTGATE_FAIL_OPEN=1 to allow on outage.\n`,
+      `agentgate: control plane unreachable (${(err as Error).message}) — blocking for safety.\n`,
     );
     process.exit(2);
   }
