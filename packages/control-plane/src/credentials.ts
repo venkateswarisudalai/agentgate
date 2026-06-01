@@ -2,10 +2,17 @@ import type Database from "better-sqlite3";
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { ApprovalRow, CredentialRow } from "./db.js";
 import { evalCondition } from "./policy.js";
+import { appendAudit } from "./audit.js";
 
 const SECRET_KEY = "credential.signing";
 
+// Prefer an out-of-band signing secret (env / secrets manager) so the key that
+// authenticates credentials does NOT live in the same SQLite file as the data
+// it protects. The DB-stored secret remains a zero-config fallback for local
+// dev; production deployments should set AGENTGATE_SIGNING_SECRET.
 function getOrCreateSigningSecret(db: Database.Database): string {
+  const fromEnv = (process.env.AGENTGATE_SIGNING_SECRET ?? "").trim();
+  if (fromEnv) return fromEnv;
   const row = db
     .prepare(`SELECT value FROM secrets WHERE key = ?`)
     .get(SECRET_KEY) as { value: string } | undefined;
@@ -228,19 +235,17 @@ export async function verifyCredential(
   db.prepare(`UPDATE credentials SET use_count = use_count + 1 WHERE id = ?`).run(
     payload.jti,
   );
-  db.prepare(
-    `INSERT INTO audit_log (approval_id, event, actor, payload)
-     VALUES (?, 'credential.used', ?, ?)`,
-  ).run(
-    row.approval_id,
-    `agent:${row.agent}`,
-    JSON.stringify({
+  appendAudit(db, {
+    approvalId: row.approval_id,
+    event: "credential.used",
+    actor: `agent:${row.agent}`,
+    payload: {
       credentialId: row.id,
       action: row.action,
       useCount: row.use_count + 1,
       maxUses: row.max_uses,
-    }),
-  );
+    },
+  });
 
   return {
     valid: true,
@@ -269,14 +274,12 @@ export function revokeCredential(
   const row = db
     .prepare(`SELECT * FROM credentials WHERE id = ?`)
     .get(credentialId) as CredentialRow;
-  db.prepare(
-    `INSERT INTO audit_log (approval_id, event, actor, payload)
-     VALUES (?, 'credential.revoked', ?, ?)`,
-  ).run(
-    row.approval_id,
-    "agentgate:control-plane",
-    JSON.stringify({ credentialId, reason }),
-  );
+  appendAudit(db, {
+    approvalId: row.approval_id,
+    event: "credential.revoked",
+    actor: "agentgate:control-plane",
+    payload: { credentialId, reason },
+  });
   return true;
 }
 

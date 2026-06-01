@@ -186,17 +186,45 @@
     <script>
       const API = "";
 
+      // In DEV MODE the control plane runs loopback-only with no token, so these
+      // headers are empty and everything just works. In TEAM MODE the operator
+      // pastes their bearer token once; it is stored locally and attached to
+      // every request. A 401 prompts for (or re-prompts for) the token.
+      function authToken() {
+        return localStorage.getItem("agentgate_token") || "";
+      }
+      function authHeaders() {
+        const t = authToken();
+        return t ? { authorization: "Bearer " + t } : {};
+      }
+      function promptForToken() {
+        const t = window.prompt(
+          "This control plane requires an operator token (team mode). Paste it:",
+          authToken(),
+        );
+        if (t !== null) localStorage.setItem("agentgate_token", t.trim());
+        return !!t;
+      }
+
       async function getJSON(p) {
-        const r = await fetch(API + p);
+        const r = await fetch(API + p, { headers: authHeaders() });
+        if (r.status === 401) {
+          promptForToken();
+          throw new Error(p + " 401 — token required");
+        }
         if (!r.ok) throw new Error(p + " " + r.status);
         return r.json();
       }
       async function postJSON(p, body) {
         const r = await fetch(API + p, {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/json", ...authHeaders() },
           body: JSON.stringify(body),
         });
+        if (r.status === 401) {
+          promptForToken();
+          throw new Error(p + " 401 — token required");
+        }
         if (!r.ok) throw new Error(p + " " + r.status);
         return r.json();
       }
@@ -380,10 +408,9 @@
         const approved = btn.dataset.act === "approve";
         btn.disabled = true;
         try {
-          await postJSON(`/v1/approvals/${id}/decide`, {
-            approved,
-            decidedBy: "dashboard-user",
-          });
+          // Identity is bound to the authenticated principal server-side; the
+          // body cannot set the approver's name.
+          await postJSON(`/v1/approvals/${id}/decide`, { approved });
         } catch (err) {
           alert("Failed: " + err.message);
           btn.disabled = false;

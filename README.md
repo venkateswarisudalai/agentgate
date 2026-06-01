@@ -1,18 +1,35 @@
 # agentgate
 
-> The governance gateway for AI agents. Every tool call your agents make in production flows through one control plane — policy, approval, audit, kill-switch — with **zero changes to agent code.**
+> **An AI DevOps engineer you can give prod access to.** agentgate watches your systems, catches incidents, and fixes them — but it **freezes before any risky action and waits for a human**, with a rollback plan and a full audit trail for every step.
 
-Think of it as a **firewall for MCP**: agents speak the Model Context Protocol to reach databases, cloud infra, payment APIs, and customer data. `agentgate` sits in front of those tool calls, classifies risk, enforces policy, and records everything.
+It's safe to run because every action it takes flows through a governance control plane — policy, approval, kill-switch, audit. That same control plane gates **any** agent that speaks the Model Context Protocol (Claude Desktop, Cursor, Cline, or your own) with **zero changes to agent code.** The agent is the product; the control plane is why you can trust it in production.
 
 ## Why
 
 In 2026, AI agents routinely get write access to production: coding agents push to repos, support agents issue refunds, ops agents run shell commands. Telling an agent "don't do X" in a prompt fails ~5% of the time, and that 5% is an incident.
 
-IAM, RBAC, and approval tooling assumed the actor was a human or a stable service. Agents are non-deterministic actors with derived intent and shifting credentials. They need their own control layer — one that sits at the point where intent becomes action: **the tool call.**
+IAM, RBAC, and approval tooling assumed the actor was a human or a stable service. Agents are non-deterministic actors with derived intent and shifting credentials. They need their own control layer — one that sits at the point where intent becomes action: **the tool call.** agentgate is that layer — with an autonomous DevOps agent built on top of it, and the ability to gate any other agent you already run.
 
-## The gateway (start here — no agent code)
+## See the agent (the 90-second story)
 
-`@agentgate/mcp-gate` transparently wraps any MCP server over stdio. Your MCP client (Claude Desktop, Cursor, Cline, …) connects to the gate instead of the server; the gate forwards everything except `tools/call`, which it intercepts → classifies risk → enforces policy / requests approval → forwards or blocks.
+```bash
+npm install
+npm run demo            # terminal 1: control plane + dashboard on :4000
+npm run demo:incident   # terminal 2: the AI DevOps engineer, live
+```
+
+The agent watches a service, a bad deploy lands, the error rate spikes — and it
+catches it **on its own**, diagnoses the cause, and proposes a rollback. Then it
+**stops** and waits for you to approve at
+[http://localhost:4000/?tab=agents](http://localhost:4000/?tab=agents). Approve,
+and it rolls back and recovers the service. Every step — detect, diagnose,
+approve, act — lands in the audit log. The agent does the work; you keep control.
+
+## The control plane underneath — gate any MCP agent (no agent code)
+
+The same governance layer that makes our agent safe will gate **any** agent you already run. `@agentgate/mcp-gate` transparently wraps any MCP server over stdio. Your MCP client (Claude Desktop, Cursor, Cline, …) connects to the gate instead of the server; the gate forwards everything except `tools/call`, which it intercepts → classifies risk → enforces policy / requests approval → forwards or blocks.
+
+> **Running from a clone?** Until the packages are on npm, use the repo: `npm install && npm run build`, then call the local binaries (e.g. `node packages/mcp-gate/dist/cli.js …`) or `npm link`. The `npx @agentgate/...` commands below are the published-package UX.
 
 ```
 MCP client  <--stdio-->  mcp-gate  <--stdio-->  any MCP server
@@ -142,6 +159,19 @@ The gateway and the SDK share one control plane, one policy engine, one audit lo
 ## Policy
 
 Rules in the control plane evaluate every gated action and can **allow**, **deny**, **require approval**, or **quarantine** the agent — by agent pattern, action pattern, and condition. Two of the demo scenarios trip seeded policies so you can watch enforcement happen with no human in the loop.
+
+## Security model & trust boundary
+
+Be clear-eyed about what this is: **a developer-adopted safety net with an audited, identity-bound approval step — not an unbypassable security perimeter.** A determined agent or operator with local machine access can route around any client-side control. agentgate's job is to make the *default* path safe, make every gated action *require a named human*, and make the record *tamper-evident*. Within that boundary:
+
+- **Authentication is required for decisions.** The approver's identity comes from an authenticated principal (bearer token), never from request-body free-text. You cannot stamp an approval with someone else's name, and the requester cannot approve their own request.
+- **Two modes.** *Dev mode* (no tokens) runs **loopback-only** and stamps decisions with a non-forgeable local identity — zero-config for a single operator. *Team mode* (set `AGENTGATE_TOKEN`, `AGENTGATE_AGENT_TOKEN`, and/or `AGENTGATE_TOKENS`) requires a bearer on every `/v1` request and is the **only** way to bind a non-loopback interface — the server refuses otherwise.
+- **The audit log is tamper-evident.** Every entry is hash-chained; `GET /v1/audit/verify` recomputes the chain and reports the first mutated row. Secrets/PII in tool inputs are **redacted before write**, so the log is not itself a credential store.
+- **Fail-closed.** If the control plane is unreachable, the hook **blocks** — there is no client-side env-var that flips it to allow. (An outage-allow policy belongs on the server, role-gated, not in a developer's shell.)
+- **Sensible default gating.** Out of the box the gate pauses only **high-severity / irreversible** actions, so routine writes don't drown you in prompts. Opt into stricter gating with `AGENTGATE_MIN_SEVERITY=medium` (hook) / `--gate-medium` (mcp-gate), or gate everything with `--gate-all`.
+- **Shadow mode.** `AGENTGATE_SHADOW=1` (hook) / `--shadow` (mcp-gate) logs what *would* have been gated and forwards it — turn it on for a week, read `GET /v1/shadow`, see your real false-positive rate before enforcing.
+
+For production, also set `AGENTGATE_SIGNING_SECRET` so the credential-signing key lives outside the database it protects.
 
 ## Roadmap
 
