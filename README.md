@@ -19,7 +19,7 @@ npm run demo:incident   # terminal 2: the AI DevOps engineer, live
 ```
 
 The agent watches a service, a bad deploy lands, the error rate spikes — and it
-catches it **on its own**, diagnoses the cause, and proposes a rollback. Then it
+catches it **on its own**, diagnoses the cause, and proposes a rollback.Then it
 **stops** and waits for you to approve at
 [http://localhost:4000/?tab=agents](http://localhost:4000/?tab=agents). Approve,
 and it rolls back and recovers the service. Every step — detect, diagnose,
@@ -27,7 +27,7 @@ approve, act — lands in the audit log. The agent does the work; you keep contr
 
 ## The control plane underneath — gate any MCP agent (no agent code)
 
-The same governance layer that makes our agent safe will gate **any** agent you already run. `@agentgate/mcp-gate` transparently wraps any MCP server over stdio. Your MCP client (Claude Desktop, Cursor, Cline, …) connects to the gate instead of the server; the gate forwards everything except `tools/call`, which it intercepts → classifies risk → enforces policy / requests approval → forwards or blocks.
+The same governance layer that makes our agent safe will gate **any** agent you already run. `@agentgate/mcp-gate` transparently wraps any MCP server over stdio. The MCP client (Claude Desktop, Cursor, Cline, …) connects to the gate instead of the server; the gate forwards everything except `tools/call`, which it intercepts → classifies risk → enforces policy / requests approval → forwards or blocks.
 
 > **Running from a clone?** Until the packages are on npm, use the repo: `npm install && npm run build`, then call the local binaries (e.g. `node packages/mcp-gate/dist/cli.js …`) or `npm link`. The `npx @agentgate/...` commands below are the published-package UX.
 
