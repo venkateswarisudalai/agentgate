@@ -4,13 +4,6 @@
 
 It's safe to run because every action it takes flows through a governance control plane — policy, approval, kill-switch, audit. That same control plane gates **any** agent that speaks the Model Context Protocol (Claude Desktop, Cursor, Cline, or your own) with **zero changes to agent code.** The agent is the product; the control plane is why you can trust it in production.
 
-## Why
-
-In 2026, AI agents routinely get write access to production: coding agents push to repos, support agents issue refunds, ops agents run shell commands. Telling an agent "don't do X" in a prompt fails ~5% of the time, and that 5% is an incident.
-
-IAM, RBAC, and approval tooling assumed the actor was a human or a stable service. Agents are non-deterministic actors with derived intent and shifting credentials. They need their own control layer — one that sits at the point where intent becomes action: **the tool call.** agentgate is that layer — with an autonomous DevOps agent built on top of it, and the ability to gate any other agent you already run.
-
-## See the agent (the 90-second story)
 
 ```bash
 npm install
